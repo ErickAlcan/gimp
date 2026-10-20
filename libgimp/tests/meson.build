@@ -66,3 +66,16 @@ foreach test_name, test_data : tests
        suite: ['libgimp', 'C'],
        timeout: 90)
 endforeach
+
+# Python-only tests
+foreach test_name : [ 'cmyk' ]
+  basename = 'test-' + test_name
+  test_env = gimp_run_env
+  test_env.append('GIMP_TESTING_PLUG_INS', 'libgimp/tests' / basename + '.py', separator: ':')
+
+  test(test_name, run_python_test,
+       args: [ gimp_exe.full_path(), meson.current_source_dir() / basename + '.py' ],
+       env: test_env,
+       suite: ['libgimp', 'python3'],
+       timeout: 90)
+endforeach

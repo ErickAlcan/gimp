@@ -38,6 +38,12 @@ app_tests = [
   'core',
   'gimpidtable',
   'layer-modes-golden',
+  'cmyk-foundation',
+  'cmyk-compositing',
+  'cmyk-image',
+  'cmyk-histogram',
+  # separate executable: sets GIMP_TESTING_NO_CMYK before initializing
+  'cmyk-nosupport',
 #'session-2-8-compatibility-multi-window',
 #'session-2-8-compatibility-single-window',
 #'single-window-mode',
@@ -86,13 +92,22 @@ endif
 tests = [
   {
     'name': 'save-and-export',
-  }
+  },
+  {
+    'name': 'cmyk-e2e',
+  },
+  {
+    'name': 'cmyk-file-formats',
+  },
 ]
 
 test_env=gimp_run_env
 test_env.set('GIMP_TESTING_ABS_TOP_SRCDIR', meson.project_source_root())
 test_env.set('GIMP_TESTING_ABS_TOP_BUILDDIR', meson.project_build_root())
 test_env.append('GIMP_TESTING_PLUG_INS', 'common/file-png', separator: ':')
+test_env.append('GIMP_TESTING_PLUG_INS',
+                'file-tiff:file-jpeg:file-psd',
+                separator: ':')
 
 run_python_test = find_program(meson.project_source_root() / 'libgimp/tests/libgimp-run-python-test.py')
 foreach testinfo : tests
@@ -114,3 +129,10 @@ foreach testinfo : tests
          timeout: 90)
   endif
 endforeach
+
+# Tier A babl probe for the CMYK work (ctypes, no GIMP needed)
+test('cmyk-babl-probe', python,
+     args: [ '-I', '-u', meson.current_source_dir() / 'cmyk-babl-probe.py' ],
+     env: test_env,
+     suite: ['app'],
+     timeout: 60)

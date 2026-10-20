@@ -523,8 +523,10 @@ Exporters read with `babl_format_with_space ("CMYK(A) u8|u16" or inverted, image
 ## 15. Test files and who writes them **[R2]**
 01a creates every file below as a skeleton (one `g_test_skip` test or a passing Python stub)
 and registers all of them in `app/tests/meson.build` (C: `app_tests`; Python: `tests`, and
-appends `file-tiff/file-tiff:file-jpeg/file-jpeg:file-psd/file-psd` once to the shared
-`GIMP_TESTING_PLUG_INS` of `test_env`). After that each file has exactly one owner:
+appends `file-tiff:file-jpeg:file-psd` once to the shared
+`GIMP_TESTING_PLUG_INS` of `test_env`; **[01a]** entries outside `common/` are plain plug-in
+names — `tools/in-build-gimp.py` maps `file-tiff` to `plug-ins/file-tiff/file-tiff`, so the
+rev-2 spelling `file-tiff/file-tiff` fails). After that each file has exactly one owner:
 `test-layer-modes-golden.c` + `layer-modes-golden.h` (01a), `test-cmyk-foundation.c` (01a→01b),
 `test-cmyk-compositing.c` (02), `test-cmyk-image.c` (03), `test-xcf.c` (04),
 `libgimp/tests/test-cmyk.py` (05), `test-cmyk-file-formats.py` (06),
