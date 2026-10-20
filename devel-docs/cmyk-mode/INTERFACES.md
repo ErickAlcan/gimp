@@ -160,7 +160,8 @@ Final (01b), validated by `/root/review-scratch/mkcmyk-rev2.c` (79 492 bytes, de
   "Public Domain". A pipeline without the identity curve stages saves as 0 bytes (measured).
 * After `cmsSaveProfileToMem`: header bytes 24–35 (date) := `07 EA 00 01 00 01 00 00 00 00 00 00`
   (2026-01-01 00:00:00), bytes 84–99 (profile ID) := 0. Size target < 100 KB.
-* Stub (01a): same code with grids 3⁴ / 3³, no fade, desc "GIMP built-in CMYK (stub)".
+* Stub (01a): the same generator with grids 3⁴ / 3³ (1 524 bytes, measured: bidirectional,
+  passes the §2 probe), desc "GIMP built-in CMYK (stub)".
 * Serialization **[R2, M4 decision]**: GeglColor serialization keeps embedding the space's ICC
   bytes (XCF, config, wire, palettes, DnD) — no format change in MVP. Cost: ~106 KB base64 per
   serialized CMYK color in text formats. A "named builtin reference" scheme is deferred (needs
@@ -357,8 +358,11 @@ space = first CMYK space among input, aux, fixed_format
   non-CMYK sources (e.g. a GEGL filter's RGBA output on aux) are converted by GEGL with babl
   (that is intended: the filtered region goes through RGB, everything else does not).
 * `cache_fishes()` calls `gimp_layer_mode_get_format()` with
-  `composite_space = (prop_cmyk_native && is_cmyk_native (mode)) ? AUTO : op->composite_space`,
-  so legacy ops and layers with an explicit RGB composite space get RGB formats (as today).
+  `composite_space = cmyk ? AUTO : op->composite_space` — i.e. AUTO **only** when the rule above
+  holds, so RGB images (including group layers whose effective composite space differs from
+  the mode default) see exactly today's arguments, and legacy ops / explicit RGB composite
+  spaces get RGB formats. When the op has no graph (paint instance), `preferred_format` is
+  `fixed_format` instead of the (NULL) source formats.
 * **B3 rule in words**: in a CMYK image every layer, filter, fill and paint composite is CMYK,
   unless the layer's (or filter's) *stored* composite-space property is explicitly an RGB
   space. `gimp_layer_update_mode_node()` (owned by 02 inside 03's `gimplayer.c`) calls

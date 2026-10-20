@@ -45,7 +45,7 @@ other workstream can start the moment this merges. No UI, no PDB, no compositing
      final, not a stub;
    * `gimp_color_profile_is_cmyk_bidirectional()` (final);
    * `gimp_color_profile_new_cmyk_builtin()` **stub**: generator of INTERFACES §3.4 with grids
-     3⁴/3³, no near-black fade, desc "GIMP built-in CMYK (stub)", fixed header bytes, zero ID,
+     3⁴/3³ (otherwise identical), desc "GIMP built-in CMYK (stub)", fixed header bytes, zero ID,
      cached with `GOnce`. Reference: `/root/review-scratch/mkcmyk-rev2.c` (the identity
      `cmsStageAllocToneCurves (NULL, n, NULL)` stages are mandatory, else 0-byte save).
 5. `gimpimage.c/.h/-private.h`: `constructed()` attaches the default CMYK profile (no undo, not

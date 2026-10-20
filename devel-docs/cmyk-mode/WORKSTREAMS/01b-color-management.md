@@ -22,7 +22,7 @@ CMYK→CMYK convert / assign / import in core.
    involving CMYK → lcms. Do **not** add `NOOPTIMIZE` yourself (callers pass it; 02's
    converter relies on optimized 16-bit device links).
 3. `gimp_color_transform_can_gegl_copy()`: FALSE iff either profile is CMYK and not equal.
-4. Final builtin (INTERFACES §3.4): 9⁴ AToB, 17³ BToA with the near-black fade, linked
+4. Final builtin (INTERFACES §3.4): grids 9⁴ AToB / 17³ BToA (near-black fade already in the stub), linked
    intents, fixed header, zero ID, desc "GIMP built-in CMYK (generic, not for press)", cprt
    "Public Domain". Port `/root/review-scratch/mkcmyk-rev2.c`. Update F3's SHA-256 constant
    once and say so in Status.
