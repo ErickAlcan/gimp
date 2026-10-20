@@ -722,6 +722,7 @@ gimp_layer_update_mode_node (GimpLayer *layer)
   GimpLayerColorSpace     visible_blend_space;
   GimpLayerColorSpace     visible_composite_space;
   GimpLayerCompositeMode  visible_composite_mode;
+  gboolean                cmyk_native;
 
   mode_node = gimp_drawable_get_mode_node (GIMP_DRAWABLE (layer));
 
@@ -738,6 +739,9 @@ gimp_layer_update_mode_node (GimpLayer *layer)
        * layer attributes dialog
        */
       visible_composite_space = gimp_layer_get_real_composite_space (layer);
+
+      /* in CMYK images, the mask is always shown CMYK native */
+      cmyk_native = TRUE;
     }
   else
     {
@@ -745,13 +749,20 @@ gimp_layer_update_mode_node (GimpLayer *layer)
       visible_blend_space     = layer->effective_blend_space;
       visible_composite_space = layer->effective_composite_space;
       visible_composite_mode  = layer->effective_composite_mode;
+
+      /* B3: in CMYK images, composite in CMYK unless the layer's *stored*
+       * composite space is explicitly an RGB space (INTERFACES §8.3).
+       */
+      cmyk_native = (gimp_layer_get_composite_space (layer) ==
+                     GIMP_LAYER_COLOR_SPACE_AUTO);
     }
 
-  gimp_gegl_mode_node_set_mode (mode_node,
-                                visible_mode,
-                                visible_blend_space,
-                                visible_composite_space,
-                                visible_composite_mode);
+  gimp_gegl_mode_node_set_mode_full (mode_node,
+                                     visible_mode,
+                                     visible_blend_space,
+                                     visible_composite_space,
+                                     visible_composite_mode,
+                                     cmyk_native);
   gimp_gegl_mode_node_set_opacity (mode_node, layer->opacity);
 }
 
