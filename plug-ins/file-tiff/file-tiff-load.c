@@ -308,6 +308,7 @@ load_image (GimpProcedure        *procedure,
   gint               li;
   gint               selectable_pages;
   gboolean           is_cmyk            = FALSE;
+  gboolean           cmyk_unsupported   = FALSE;
   gchar             *sketchbook_info;
   gint               sketchbook_len;
   gboolean           sketchbook_layers  = FALSE;
@@ -643,6 +644,7 @@ load_image (GimpProcedure        *procedure,
       gint              i;
       gboolean          worst_case           = FALSE;
       gint              gimp_compression     = GIMP_COMPRESSION_NONE;
+      gboolean          native_cmyk          = FALSE;
 
       if (TIFFSetDirectory (tif, pages.pages[li]) == 0)
         {
@@ -1104,44 +1106,113 @@ load_image (GimpProcedure        *procedure,
           break;
 
         case PHOTOMETRIC_SEPARATED:
-          layer_type = alpha ? GIMP_RGBA_IMAGE : GIMP_RGB_IMAGE;
-          /* It's possible that a CMYK image might not have an
-           * attached profile, so we'll check for it and set up
-           * space accordingly
-           */
-          is_cmyk = TRUE;
-          if (profile && gimp_color_profile_is_cmyk (profile))
-            {
-              space = gimp_color_profile_get_space (profile,
-                                                    GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
-                                                    error);
-            }
-          else
-            {
-              space = NULL;
-            }
+          {
+            guint16 inkset = INKSET_CMYK;
 
-          if (alpha)
-            base_format = babl_format_new (babl_model ("CMYKA"),
-                                           type,
-                                           babl_component ("Cyan"),
-                                           babl_component ("Magenta"),
-                                           babl_component ("Yellow"),
-                                           babl_component ("Key"),
-                                           babl_component ("A"),
-                                           NULL);
-          else
-            base_format = babl_format_new (babl_model ("CMYK"),
-                                           type,
-                                           babl_component ("Cyan"),
-                                           babl_component ("Magenta"),
-                                           babl_component ("Yellow"),
-                                           babl_component ("Key"),
-                                           NULL);
+            is_cmyk = TRUE;
 
-          base_format =
-            babl_format_with_space (babl_format_get_encoding (base_format),
-                                    space);
+            TIFFGetFieldDefaulted (tif, TIFFTAG_INKSET, &inkset);
+
+            /* Native CMYK (INTERFACES §14) unless the embedded CMYK
+             * profile can't be a conversion target (input-only: babl
+             * crashes on RGB -> CMYK with it), or the ink set isn't
+             * CMYK. Without CMYK support in GIMP, image creation fails
+             * below and we fall back to RGB too.
+             */
+            if (inkset != INKSET_CMYK || cmyk_unsupported)
+              {
+                native_cmyk = FALSE;
+              }
+            else if (*image && pages.target != GIMP_PAGE_SELECTOR_TARGET_IMAGES &&
+                     gimp_image_get_base_type (*image) != GIMP_CMYK)
+              {
+                /* Page added as layer to an RGB image */
+                native_cmyk = FALSE;
+              }
+            else if (profile && gimp_color_profile_is_cmyk (profile) &&
+                     ! gimp_color_profile_is_cmyk_bidirectional (profile))
+              {
+                g_message (_("The embedded CMYK color profile of '%s' cannot "
+                             "be used as a color space (it has no output "
+                             "tables). The image is imported as RGB."),
+                           gimp_file_get_utf8_name (file));
+                native_cmyk = FALSE;
+              }
+            else
+              {
+                native_cmyk = TRUE;
+              }
+
+            if (native_cmyk)
+              {
+                image_type = GIMP_CMYK;
+                layer_type = alpha ? GIMP_CMYKA_IMAGE : GIMP_CMYK_IMAGE;
+
+                /* CMYK precisions are always non-linear */
+                switch (image_precision)
+                  {
+                  case GIMP_PRECISION_U8_LINEAR:
+                    image_precision = GIMP_PRECISION_U8_NON_LINEAR;     break;
+                  case GIMP_PRECISION_U16_LINEAR:
+                    image_precision = GIMP_PRECISION_U16_NON_LINEAR;    break;
+                  case GIMP_PRECISION_U32_LINEAR:
+                    image_precision = GIMP_PRECISION_U32_NON_LINEAR;    break;
+                  case GIMP_PRECISION_HALF_LINEAR:
+                    image_precision = GIMP_PRECISION_HALF_NON_LINEAR;   break;
+                  case GIMP_PRECISION_FLOAT_LINEAR:
+                    image_precision = GIMP_PRECISION_FLOAT_NON_LINEAR;  break;
+                  case GIMP_PRECISION_DOUBLE_LINEAR:
+                    image_precision = GIMP_PRECISION_DOUBLE_NON_LINEAR; break;
+                  default:
+                    break;
+                  }
+              }
+            else
+              {
+                image_type = GIMP_RGB;
+                layer_type = alpha ? GIMP_RGBA_IMAGE : GIMP_RGB_IMAGE;
+              }
+
+            /* It's possible that a CMYK image might not have an
+             * attached profile, so we'll check for it and set up
+             * space accordingly. For native CMYK the data is tagged
+             * with the layer's (image) space when the layer exists.
+             */
+            if (! native_cmyk && profile && gimp_color_profile_is_cmyk (profile))
+              {
+                space = gimp_color_profile_get_space (profile,
+                                                      GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                                      error);
+              }
+            else
+              {
+                space = NULL;
+              }
+
+            if (alpha && ! save_transp_pixels)
+              base_format = tiff_cmyk_associated_format (type);
+            else if (alpha)
+              base_format = babl_format_new (babl_model ("CMYKA"),
+                                             type,
+                                             babl_component ("Cyan"),
+                                             babl_component ("Magenta"),
+                                             babl_component ("Yellow"),
+                                             babl_component ("Key"),
+                                             babl_component ("A"),
+                                             NULL);
+            else
+              base_format = babl_format_new (babl_model ("CMYK"),
+                                             type,
+                                             babl_component ("Cyan"),
+                                             babl_component ("Magenta"),
+                                             babl_component ("Yellow"),
+                                             babl_component ("Key"),
+                                             NULL);
+
+            base_format =
+              babl_format_with_space (babl_format_get_encoding (base_format),
+                                      space);
+          }
           break;
 
         default:
@@ -1189,6 +1260,7 @@ load_image (GimpProcedure        *procedure,
         {
           image_type  = GIMP_RGB;
           layer_type  = GIMP_RGBA_IMAGE;
+          native_cmyk = FALSE;
 
           if (profile_linear)
             {
@@ -1224,7 +1296,73 @@ load_image (GimpProcedure        *procedure,
             }
         }
 
-      if ((pages.target == GIMP_PAGE_SELECTOR_TARGET_IMAGES) || (! *image))
+      if (native_cmyk &&
+          (pages.target == GIMP_PAGE_SELECTOR_TARGET_IMAGES || ! *image))
+        {
+          /* Probe CMYK support: gimp-image-new refuses GIMP_CMYK
+           * without it. Then use today's RGB import.
+           */
+          *image = gimp_image_new_with_precision (cols, rows, GIMP_CMYK,
+                                                  image_precision);
+
+          if (! *image)
+            {
+              g_printerr ("file-tiff: no CMYK image support (%s), "
+                          "importing as RGB.\n",
+                          gimp_pdb_get_last_error (gimp_get_pdb ()));
+
+              native_cmyk      = FALSE;
+              cmyk_unsupported = TRUE;
+              image_type       = GIMP_RGB;
+              layer_type  = alpha ? GIMP_RGBA_IMAGE : GIMP_RGB_IMAGE;
+
+              if (profile && gimp_color_profile_is_cmyk (profile))
+                {
+                  space = gimp_color_profile_get_space (profile,
+                                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                                        NULL);
+                  base_format =
+                    babl_format_with_space (babl_format_get_encoding (base_format),
+                                            space);
+                }
+
+              if (pages.target == GIMP_PAGE_SELECTOR_TARGET_LAYERS && li == 0)
+                first_image_type = image_type;
+            }
+          else
+            {
+              gimp_image_undo_disable (*image);
+
+              if (pages.target == GIMP_PAGE_SELECTOR_TARGET_IMAGES)
+                images_list = g_list_prepend (images_list, *image);
+
+              /* INTERFACES §14: the profile is set right away, before
+               * any layer exists, or the pixels would be re-separated.
+               */
+              if (profile && gimp_color_profile_is_cmyk (profile))
+                {
+                  if (! gimp_image_set_color_profile (*image, profile))
+                    g_printerr ("file-tiff: could not set the CMYK profile: %s\n",
+                                gimp_pdb_get_last_error (gimp_get_pdb ()));
+                }
+              else
+                {
+                  g_message (_("'%s' has no embedded CMYK color profile. "
+                               "The default CMYK profile is used; the ink "
+                               "values are kept unchanged."),
+                             gimp_file_get_utf8_name (file));
+                }
+            }
+        }
+
+      if (native_cmyk)
+        {
+          /* Image created above, or a later page of a layered import:
+           * the image profile stays the first one.
+           */
+          g_clear_object (&profile);
+        }
+      else if ((pages.target == GIMP_PAGE_SELECTOR_TARGET_IMAGES) || (! *image))
         {
           *image = gimp_image_new_with_precision (cols, rows, image_type,
                                                   image_precision);
@@ -1243,10 +1381,14 @@ load_image (GimpProcedure        *procedure,
             images_list = g_list_prepend (images_list, *image);
         }
 
-      /* attach CMYK profile to GimpImage if applicable */
+      /* attach CMYK profile to GimpImage if applicable (RGB import of a
+       * CMYK file). An input-only profile can't be a soft-proofing
+       * target either.
+       */
       if (profile && gimp_color_profile_is_cmyk (profile))
         {
-          gimp_image_set_simulation_profile (*image, profile);
+          if (gimp_color_profile_is_cmyk_bidirectional (profile))
+            gimp_image_set_simulation_profile (*image, profile);
           g_clear_object (&profile);
         }
 
@@ -1686,6 +1828,13 @@ load_image (GimpProcedure        *procedure,
           layer = gimp_layer_new (*image, layer_name, cols, rows, layer_type, 100,
                                   gimp_image_get_default_new_layer_mode (*image));
           g_free (layer_name);
+
+          /* Until gimp-layer-new honours GIMP_CMYKA_IMAGE (WS05,
+           * INTERFACES §12), a CMYKA layer may come back without alpha.
+           */
+          if (layer_type == GIMP_CMYKA_IMAGE &&
+              ! gimp_drawable_has_alpha (GIMP_DRAWABLE (layer)))
+            gimp_layer_add_alpha (layer);
 
           if (! base_format && image_type == GIMP_INDEXED)
             {
