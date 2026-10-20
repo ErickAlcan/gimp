@@ -29,6 +29,7 @@
 
 #include "gimp.h"
 #include "gimpdrawable.h"
+#include "gimperror.h"
 #include "gimpimage.h"
 #include "gimpimage-color-profile.h"
 #include "gimpimage-colormap.h"
@@ -41,12 +42,59 @@
 #include "gimp-intl.h"
 
 
+/**
+ * gimp_image_convert_type:
+ * @image:        a #GimpImage
+ * @new_type:     the new base type
+ * @dest_profile: (nullable): the profile to convert to
+ * @progress:     (nullable): a #GimpProgress
+ * @error:        return location for a #GError
+ *
+ * Same as gimp_image_convert_type_full() with
+ * %GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL and black point compensation.
+ *
+ * Returns: %TRUE on success.
+ **/
 gboolean
 gimp_image_convert_type (GimpImage          *image,
                          GimpImageBaseType   new_type,
                          GimpColorProfile   *dest_profile,
                          GimpProgress       *progress,
                          GError            **error)
+{
+  return gimp_image_convert_type_full (image, new_type, dest_profile,
+                                       GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                       TRUE, progress, error);
+}
+
+/**
+ * gimp_image_convert_type_full:
+ * @image:        a #GimpImage
+ * @new_type:     the new base type
+ * @dest_profile: (nullable): the profile to convert to, or %NULL for the
+ *                default profile of @new_type
+ * @intent:       the rendering intent of the conversion
+ * @bpc:          whether to use black point compensation
+ * @progress:     (nullable): a #GimpProgress
+ * @error:        return location for a #GError
+ *
+ * Converts @image to @new_type.  Allowed are RGB/GRAY/INDEXED -> CMYK,
+ * CMYK -> RGB/GRAY and RGB <-> GRAY; conversions to indexed go through
+ * gimp_image_convert_indexed().
+ *
+ * Conversions involving CMYK are not implemented yet (WS03) and fail
+ * with "not implemented".
+ *
+ * Returns: %TRUE on success.
+ **/
+gboolean
+gimp_image_convert_type_full (GimpImage                *image,
+                              GimpImageBaseType         new_type,
+                              GimpColorProfile         *dest_profile,
+                              GimpColorRenderingIntent  intent,
+                              gboolean                  bpc,
+                              GimpProgress             *progress,
+                              GError                  **error)
 {
   GimpColorProfile  *src_profile;
   GimpImageBaseType  old_type;
@@ -59,6 +107,17 @@ gimp_image_convert_type (GimpImage          *image,
   g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
   g_return_val_if_fail (new_type != gimp_image_get_base_type (image), FALSE);
   g_return_val_if_fail (new_type != GIMP_INDEXED, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  /* TODO (WS03): conversions to and from CMYK, honouring intent and bpc */
+  if (new_type == GIMP_CMYK ||
+      gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      g_set_error_literal (error, GIMP_ERROR, GIMP_FAILED,
+                           _("Converting to or from CMYK is not implemented"));
+      return FALSE;
+    }
+
   g_return_val_if_fail (gimp_babl_is_valid (new_type,
                                             gimp_image_get_precision (image)),
                         FALSE);

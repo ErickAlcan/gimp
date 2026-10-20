@@ -18,8 +18,15 @@
 #pragma once
 
 
-gboolean   gimp_image_convert_type (GimpImage          *image,
-                                    GimpImageBaseType   new_type,
-                                    GimpColorProfile   *dest_profile,
-                                    GimpProgress       *progress,
-                                    GError            **error);
+gboolean   gimp_image_convert_type      (GimpImage                *image,
+                                         GimpImageBaseType         new_type,
+                                         GimpColorProfile         *dest_profile,
+                                         GimpProgress             *progress,
+                                         GError                  **error);
+gboolean   gimp_image_convert_type_full (GimpImage                *image,
+                                         GimpImageBaseType         new_type,
+                                         GimpColorProfile         *dest_profile,
+                                         GimpColorRenderingIntent  intent,
+                                         gboolean                  bpc,
+                                         GimpProgress             *progress,
+                                         GError                  **error);
