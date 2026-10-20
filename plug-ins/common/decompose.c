@@ -636,6 +636,9 @@ create_new_layer (GimpImage         *image,
     case GIMP_INDEXED:
       gdtype = GIMP_INDEXED_IMAGE;
       break;
+    case GIMP_CMYK:
+      gdtype = GIMP_CMYK_IMAGE;
+      break;
     }
 
   if (! layername)
