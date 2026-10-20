@@ -41,7 +41,7 @@ struct _GimpOperationMaskComponents
   GimpComponentMask           mask;
   gdouble                     alpha;
 
-  guint32                     alpha_value;
+  guint64                     alpha_value;
   gpointer                    process;
   const Babl                 *format;
 };

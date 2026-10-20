@@ -31,6 +31,8 @@
 
 #include "operations-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpoperationsemiflatten.h"
 
 #include "gimp-intl.h"
@@ -146,8 +148,16 @@ static void
 gimp_operation_semi_flatten_prepare (GeglOperation *operation)
 {
   const Babl *space = gegl_operation_get_source_space (operation, "input");
-  gegl_operation_set_format (operation, "input",  babl_format_with_space ("RGBA float", space));
-  gegl_operation_set_format (operation, "output", babl_format_with_space ("RGBA float", space));
+  const Babl *format;
+
+  /* CMYK input is flattened natively against the color in the CMYK space */
+  if (gimp_babl_space_is_cmyk (space))
+    format = babl_format_with_space ("CMYKA float", space);
+  else
+    format = babl_format_with_space ("RGBA float", space);
+
+  gegl_operation_set_format (operation, "input",  format);
+  gegl_operation_set_format (operation, "output", format);
 }
 
 static gboolean
@@ -158,9 +168,45 @@ gimp_operation_semi_flatten_process (GeglOperation       *operation,
                                      const GeglRectangle *roi,
                                      gint                 level)
 {
-  GimpOperationSemiFlatten *self = GIMP_OPERATION_SEMI_FLATTEN (operation);
-  gfloat                   *src  = in_buf;
-  gfloat                   *dest = out_buf;
+  GimpOperationSemiFlatten *self   = GIMP_OPERATION_SEMI_FLATTEN (operation);
+  const Babl               *format = gegl_operation_get_format (operation, "output");
+  gfloat                   *src    = in_buf;
+  gfloat                   *dest   = out_buf;
+
+  if (babl_format_get_n_components (format) == 5)
+    {
+      gdouble cmyka[5];
+      gint    c;
+
+      gegl_color_get_pixel (self->color,
+                            babl_format_with_space ("CMYKA double", format),
+                            cmyka);
+
+      while (samples--)
+        {
+          gfloat alpha = src[ALPHA_C];
+
+          if (alpha <= 0.0 || alpha >= 1.0)
+            {
+              for (c = 0; c < 4; c++)
+                dest[c] = src[c];
+
+              dest[ALPHA_C] = alpha;
+            }
+          else
+            {
+              for (c = 0; c < 4; c++)
+                dest[c] = src[c] * alpha + cmyka[c] * (1.0 - alpha);
+
+              dest[ALPHA_C] = 1.0;
+            }
+
+          src  += 5;
+          dest += 5;
+        }
+
+      return TRUE;
+    }
 
   while (samples--)
     {
