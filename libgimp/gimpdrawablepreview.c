@@ -438,7 +438,7 @@ gimp_drawable_preview_draw_area (GimpDrawablePreview *preview,
                               y - yoff - ymin,
                               width,
                               height,
-                              gimp_drawable_type (preview->drawable),
+                              _gimp_drawable_preview_get_image_type (preview->drawable),
                               buf, rowstride);
     }
   else
@@ -605,6 +605,10 @@ _gimp_drawable_preview_get_bounds (GimpDrawable *drawable,
  *
  * Creates a new #GimpDrawablePreview widget for @drawable.
  *
+ * If @drawable is a CMYK drawable, the buffers drawn on the preview
+ * with gimp_preview_draw_buffer() must contain R'G'B' u8 or R'G'B'A u8
+ * (sRGB) pixels, i.e. the format of the drawable's thumbnails.
+ *
  * Returns: A pointer to the new #GimpDrawablePreview widget.
  *
  * Since: 2.10
@@ -635,4 +639,39 @@ gimp_drawable_preview_get_drawable (GimpDrawablePreview *preview)
   g_return_val_if_fail (GIMP_IS_DRAWABLE_PREVIEW (preview), NULL);
 
   return preview->drawable;
+}
+
+/**
+ * _gimp_drawable_preview_get_image_type:
+ * @drawable: a drawable
+ *
+ * GimpPreviewArea does not handle CMYK: the buffers drawn on previews
+ * of CMYK drawables are R'G'B'(A) u8 (sRGB), like their thumbnails.
+ *
+ * Returns: the #GimpImageType of the buffers drawn on a preview of
+ *          @drawable.
+ */
+GimpImageType
+_gimp_drawable_preview_get_image_type (GimpDrawable *drawable)
+{
+  if (gimp_drawable_is_cmyk (drawable))
+    return gimp_drawable_has_alpha (drawable) ? GIMP_RGBA_IMAGE : GIMP_RGB_IMAGE;
+
+  return gimp_drawable_type (drawable);
+}
+
+/**
+ * _gimp_drawable_preview_get_bpp:
+ * @drawable: a drawable
+ *
+ * Returns: the bytes per pixel of the buffers drawn on a preview of
+ *          @drawable, see _gimp_drawable_preview_get_image_type().
+ */
+gint
+_gimp_drawable_preview_get_bpp (GimpDrawable *drawable)
+{
+  if (gimp_drawable_is_cmyk (drawable))
+    return gimp_drawable_has_alpha (drawable) ? 4 : 3;
+
+  return gimp_drawable_get_bpp (drawable);
 }

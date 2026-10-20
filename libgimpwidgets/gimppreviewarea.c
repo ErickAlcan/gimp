@@ -504,6 +504,9 @@ gimp_preview_area_new (void)
  *
  * Draws @buf on @area and queues a redraw on the given rectangle.
  *
+ * CMYK image types are not supported: convert CMYK pixels to RGB
+ * first (e.g. read the drawable as "R'G'B'A u8").
+ *
  * Since GIMP 2.2
  **/
 void
@@ -528,6 +531,7 @@ gimp_preview_area_draw (GimpPreviewArea *area,
 
   g_return_if_fail (GIMP_IS_PREVIEW_AREA (area));
   g_return_if_fail (width >= 0 && height >= 0);
+  g_return_if_fail (type != GIMP_CMYK_IMAGE && type != GIMP_CMYKA_IMAGE);
 
   if (width == 0 || height == 0)
     return;
@@ -758,6 +762,11 @@ gimp_preview_area_draw (GimpPreviewArea *area,
           dest += area->rowstride;
         }
       break;
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      /* refused by the g_return_if_fail() at the beginning */
+      break;
     }
 
   gimp_preview_area_queue_draw (area, x, y, width, height);
@@ -781,6 +790,9 @@ gimp_preview_area_draw (GimpPreviewArea *area,
  *
  * Composites @buf1 on @buf2 with the given @opacity, draws the result
  * to @area and queues a redraw on the given rectangle.
+ *
+ * CMYK image types are not supported: convert CMYK pixels to RGB
+ * first (e.g. read the drawable as "R'G'B'A u8").
  *
  * Since GIMP 2.2
  **/
@@ -811,6 +823,7 @@ gimp_preview_area_blend (GimpPreviewArea *area,
 
   g_return_if_fail (GIMP_IS_PREVIEW_AREA (area));
   g_return_if_fail (width >= 0 && height >= 0);
+  g_return_if_fail (type != GIMP_CMYK_IMAGE && type != GIMP_CMYKA_IMAGE);
 
   if (width == 0 || height == 0)
     return;
@@ -1160,6 +1173,11 @@ gimp_preview_area_blend (GimpPreviewArea *area,
           dest += area->rowstride;
         }
       break;
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      /* refused by the g_return_if_fail() at the beginning */
+      break;
     }
 
   gimp_preview_area_queue_draw (area, x, y, width, height);
@@ -1185,6 +1203,9 @@ gimp_preview_area_blend (GimpPreviewArea *area,
  *
  * Composites @buf1 on @buf2 with the given @mask, draws the result on
  * @area and queues a redraw on the given rectangle.
+ *
+ * CMYK image types are not supported: convert CMYK pixels to RGB
+ * first (e.g. read the drawable as "R'G'B'A u8").
  *
  * Since GIMP 2.2
  **/
@@ -1217,6 +1238,7 @@ gimp_preview_area_mask (GimpPreviewArea *area,
 
   g_return_if_fail (GIMP_IS_PREVIEW_AREA (area));
   g_return_if_fail (width >= 0 && height >= 0);
+  g_return_if_fail (type != GIMP_CMYK_IMAGE && type != GIMP_CMYKA_IMAGE);
 
   if (width == 0 || height == 0)
     return;
@@ -1767,6 +1789,11 @@ gimp_preview_area_mask (GimpPreviewArea *area,
           src_mask += rowstride_mask;
           dest     += area->rowstride;
         }
+      break;
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      /* refused by the g_return_if_fail() at the beginning */
       break;
     }
 

@@ -30,6 +30,8 @@
 #include "gimp.h"
 #include "gimppdb-private.h"
 
+#include "gimpdrawablepreview.h"
+
 #include "libgimp-intl.h"
 
 #include "gimpaspectpreview.h"
@@ -312,7 +314,7 @@ gimp_aspect_preview_draw_buffer (GimpPreview  *preview,
       gimp_preview_area_draw (GIMP_PREVIEW_AREA (area),
                               0, 0,
                               width, height,
-                              gimp_drawable_type (aspect_preview->drawable),
+                              _gimp_drawable_preview_get_image_type (aspect_preview->drawable),
                               buffer,
                               rowstride);
     }
@@ -335,9 +337,9 @@ gimp_aspect_preview_draw_buffer (GimpPreview  *preview,
 
       gimp_preview_area_mask (GIMP_PREVIEW_AREA (area),
                               0, 0, width, height,
-                              gimp_drawable_type (aspect_preview->drawable),
+                              _gimp_drawable_preview_get_image_type (aspect_preview->drawable),
                               g_bytes_get_data (src, NULL),
-                              width * gimp_drawable_get_bpp (aspect_preview->drawable),
+                              width * _gimp_drawable_preview_get_bpp (aspect_preview->drawable),
                               buffer, rowstride,
                               g_bytes_get_data (sel, NULL), width);
 

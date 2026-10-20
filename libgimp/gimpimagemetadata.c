@@ -354,9 +354,11 @@ _gimp_image_metadata_load_finish (GimpImage             *image,
       GimpColorProfile *profile = gimp_image_get_color_profile (image);
 
       /* only look for colorspace information from metadata if the
-       * image didn't contain an embedded color profile
+       * image didn't contain an embedded color profile. The metadata
+       * colorspaces are RGB ones: they never apply to CMYK images
+       * (which always have a CMYK profile anyway).
        */
-      if (! profile)
+      if (! profile && gimp_image_get_base_type (image) != GIMP_CMYK)
         {
           GimpMetadataColorspace colorspace;
 
