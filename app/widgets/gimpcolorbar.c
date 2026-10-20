@@ -305,6 +305,19 @@ gimp_color_bar_set_channel (GimpColorBar         *bar,
     case GIMP_HISTOGRAM_BLUE:
       color = gegl_color_new ("blue");
       break;
+    case GIMP_HISTOGRAM_CYAN:
+      color = gegl_color_new ("cyan");
+      break;
+    case GIMP_HISTOGRAM_MAGENTA:
+      color = gegl_color_new ("magenta");
+      break;
+    case GIMP_HISTOGRAM_YELLOW:
+      color = gegl_color_new ("yellow");
+      break;
+    case GIMP_HISTOGRAM_BLACK:
+      /*  like channel previews (D8): full ink is white  */
+      color = gegl_color_new ("white");
+      break;
     }
 
   g_return_if_fail (color != NULL);

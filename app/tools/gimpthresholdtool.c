@@ -25,6 +25,8 @@
 
 #include "tools-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "core/gimp-gui.h"
 #include "core/gimpasync.h"
 #include "core/gimpcancelable.h"
@@ -181,8 +183,16 @@ gimp_threshold_tool_initialize (GimpTool     *tool,
   {
     GeglBuffer *temp;
 
-    temp = gegl_buffer_new (GEGL_RECTANGLE (0, 0, 1, 1),
-                            gimp_drawable_get_format (drawable));
+    const Babl *format = gimp_drawable_get_format (drawable);
+
+    /*  CMYK drawables are thresholded on their RGB conversion  */
+    if (gimp_drawable_is_cmyk (drawable))
+      format = gimp_babl_format (GIMP_RGB,
+                                 gimp_drawable_get_precision (drawable),
+                                 gimp_drawable_has_alpha (drawable),
+                                 NULL);
+
+    temp = gegl_buffer_new (GEGL_RECTANGLE (0, 0, 1, 1), format);
 
     gimp_histogram_calculate (t_tool->histogram,
                               temp, GEGL_RECTANGLE (0, 0, 1, 1),
@@ -193,7 +203,7 @@ gimp_threshold_tool_initialize (GimpTool     *tool,
 
   n_bins = gimp_histogram_n_bins (t_tool->histogram);
 
-  t_tool->histogram_async = gimp_drawable_calculate_histogram_async (
+  t_tool->histogram_async = gimp_drawable_calculate_histogram_rgb_async (
     drawable, t_tool->histogram, FALSE);
   gimp_histogram_view_set_histogram (t_tool->histogram_box->view,
                                      t_tool->histogram);
@@ -373,16 +383,23 @@ gimp_threshold_tool_channel_sensitive (gint     value,
     case GIMP_HISTOGRAM_RED:
     case GIMP_HISTOGRAM_GREEN:
     case GIMP_HISTOGRAM_BLUE:
-      return gimp_drawable_is_rgb (drawable);
+      /*  CMYK drawables are processed as their RGB conversion  */
+      return (gimp_drawable_is_rgb (drawable) ||
+              gimp_drawable_is_cmyk (drawable));
 
     case GIMP_HISTOGRAM_ALPHA:
       return gimp_drawable_has_alpha (drawable);
 
     case GIMP_HISTOGRAM_RGB:
-      return gimp_drawable_is_rgb (drawable);
-
     case GIMP_HISTOGRAM_LUMINANCE:
-      return gimp_drawable_is_rgb (drawable);
+      return (gimp_drawable_is_rgb (drawable) ||
+              gimp_drawable_is_cmyk (drawable));
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      return FALSE;
     }
 
   return FALSE;

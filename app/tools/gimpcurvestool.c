@@ -225,8 +225,9 @@ gimp_curves_tool_initialize (GimpTool     *tool,
   config = GIMP_CURVES_CONFIG (filter_tool->config);
 
   histogram = gimp_histogram_new (config->trc);
-  g_object_unref (gimp_drawable_calculate_histogram_async (drawable, histogram,
-                                                           FALSE));
+  g_object_unref (gimp_drawable_calculate_histogram_rgb_async (drawable,
+                                                               histogram,
+                                                               FALSE));
   gimp_histogram_view_set_background (GIMP_HISTOGRAM_VIEW (c_tool->graph),
                                       histogram);
   g_object_unref (histogram);
@@ -717,7 +718,7 @@ gimp_curves_tool_config_notify (GimpFilterTool   *filter_tool,
       GimpHistogram *histogram;
 
       histogram = gimp_histogram_new (curves_config->trc);
-      g_object_unref (gimp_drawable_calculate_histogram_async
+      g_object_unref (gimp_drawable_calculate_histogram_rgb_async
                       (GIMP_TOOL (filter_tool)->drawables->data, histogram, FALSE));
       gimp_histogram_view_set_background (GIMP_HISTOGRAM_VIEW (curves_tool->graph),
                                           histogram);
@@ -871,6 +872,13 @@ gimp_curves_tool_update_channel (GimpCurvesTool *tool)
       gimp_color_bar_set_buffers (GIMP_COLOR_BAR (tool->xrange),
                                   r, g, b);
       break;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      /*  not a curves channel (the config only accepts VALUE..ALPHA)  */
+      g_return_if_reached ();
     }
 
   gimp_histogram_view_set_channel (GIMP_HISTOGRAM_VIEW (tool->graph),
@@ -1028,7 +1036,9 @@ curves_menu_sensitivity (gint      value,
     case GIMP_HISTOGRAM_RED:
     case GIMP_HISTOGRAM_GREEN:
     case GIMP_HISTOGRAM_BLUE:
-      return gimp_drawable_is_rgb (drawable);
+      /*  CMYK drawables are processed as their RGB conversion  */
+      return (gimp_drawable_is_rgb (drawable) ||
+              gimp_drawable_is_cmyk (drawable));
 
     case GIMP_HISTOGRAM_ALPHA:
       return gimp_drawable_has_alpha (drawable);
@@ -1037,6 +1047,12 @@ curves_menu_sensitivity (gint      value,
       return FALSE;
 
     case GIMP_HISTOGRAM_LUMINANCE:
+      return FALSE;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
       return FALSE;
     }
 

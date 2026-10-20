@@ -49,7 +49,10 @@ gimp_drawable_equalize (GimpDrawable *drawable,
   selection = gimp_image_get_mask (image);
 
   histogram = gimp_histogram_new (GIMP_TRC_NON_LINEAR);
-  gimp_drawable_calculate_histogram (drawable, histogram, FALSE);
+  /*  gimp:equalize works on R'G'B'A; for CMYK use the histogram of the
+   *  RGB conversion it actually processes (D8)
+   */
+  gimp_drawable_calculate_histogram_rgb (drawable, histogram, FALSE);
 
   equalize = gegl_node_new_child (NULL,
                                   "operation", "gimp:equalize",

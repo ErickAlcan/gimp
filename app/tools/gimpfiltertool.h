@@ -62,6 +62,7 @@ struct _GimpFilterTool
   GtkWidget          *clip_combo;
   GtkWidget          *region_combo;
   GtkWidget          *active_picker;
+  GtkWidget          *cmyk_label;
 
   /* widget */
   GimpToolWidget     *widget;
