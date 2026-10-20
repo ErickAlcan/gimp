@@ -132,8 +132,13 @@ typedef enum
  * @GIMP_CHANNEL_GRAY:    Gray
  * @GIMP_CHANNEL_INDEXED: Indexed
  * @GIMP_CHANNEL_ALPHA:   Alpha
+ * @GIMP_CHANNEL_CYAN:    Cyan (Since: 3.4)
+ * @GIMP_CHANNEL_MAGENTA: Magenta (Since: 3.4)
+ * @GIMP_CHANNEL_YELLOW:  Yellow (Since: 3.4)
+ * @GIMP_CHANNEL_BLACK:   Black (Since: 3.4)
  *
- * Channels (as in color components).
+ * Channels (as in color components).  The alpha channel of a CMYK image
+ * is %GIMP_CHANNEL_ALPHA.
  **/
 #define GIMP_TYPE_CHANNEL_TYPE (gimp_channel_type_get_type ())
 
@@ -146,7 +151,11 @@ typedef enum
   GIMP_CHANNEL_BLUE,     /*< desc="Blue"    >*/
   GIMP_CHANNEL_GRAY,     /*< desc="Gray"    >*/
   GIMP_CHANNEL_INDEXED,  /*< desc="Indexed" >*/
-  GIMP_CHANNEL_ALPHA     /*< desc="Alpha"   >*/
+  GIMP_CHANNEL_ALPHA,    /*< desc="Alpha"   >*/
+  GIMP_CHANNEL_CYAN,     /*< desc="Cyan"    >*/
+  GIMP_CHANNEL_MAGENTA,  /*< desc="Magenta" >*/
+  GIMP_CHANNEL_YELLOW,   /*< desc="Yellow"  >*/
+  GIMP_CHANNEL_BLACK     /*< desc="Black"   >*/
 } GimpChannelType;
 
 
@@ -583,6 +592,7 @@ typedef enum
  * @GIMP_RGB:     RGB color
  * @GIMP_GRAY:    Grayscale
  * @GIMP_INDEXED: Indexed color
+ * @GIMP_CMYK:    CMYK color (Since: 3.4)
  *
  * Image color models.
  **/
@@ -594,7 +604,8 @@ typedef enum
 {
   GIMP_RGB,     /*< desc="RGB color"     >*/
   GIMP_GRAY,    /*< desc="Grayscale"     >*/
-  GIMP_INDEXED  /*< desc="Indexed color" >*/
+  GIMP_INDEXED, /*< desc="Indexed color" >*/
+  GIMP_CMYK     /*< desc="CMYK color"    >*/
 } GimpImageBaseType;
 
 
@@ -606,6 +617,8 @@ typedef enum
  * @GIMP_GRAYA_IMAGE:    Grayscale-alpha
  * @GIMP_INDEXED_IMAGE:  Indexed
  * @GIMP_INDEXEDA_IMAGE: Indexed-alpha
+ * @GIMP_CMYK_IMAGE:     CMYK (Since: 3.4)
+ * @GIMP_CMYKA_IMAGE:    CMYK-alpha (Since: 3.4)
  *
  * Possible drawable types.
  **/
@@ -620,7 +633,9 @@ typedef enum
   GIMP_GRAY_IMAGE,     /*< desc="Grayscale"       >*/
   GIMP_GRAYA_IMAGE,    /*< desc="Grayscale-alpha" >*/
   GIMP_INDEXED_IMAGE,  /*< desc="Indexed"         >*/
-  GIMP_INDEXEDA_IMAGE  /*< desc="Indexed-alpha"   >*/
+  GIMP_INDEXEDA_IMAGE, /*< desc="Indexed-alpha"   >*/
+  GIMP_CMYK_IMAGE,     /*< desc="CMYK"            >*/
+  GIMP_CMYKA_IMAGE     /*< desc="CMYK-alpha"      >*/
 } GimpImageType;
 
 
@@ -1362,6 +1377,7 @@ typedef enum
  * @GIMP_EXPORT_CAN_HANDLE_LAYER_MASKS:         Handles layer masks
  * @GIMP_EXPORT_NEEDS_ALPHA:                    Needs alpha channels
  * @GIMP_EXPORT_NEEDS_CROP:                     Needs to crop content to image bounds
+ * @GIMP_EXPORT_CAN_HANDLE_CMYK:                Handles CMYK images (Since: 3.4)
  *
  * The types of images and layers an export procedure can handle
  **/
@@ -1381,7 +1397,8 @@ typedef enum
   GIMP_EXPORT_CAN_HANDLE_LAYER_MASKS         = 1 << 7,
   GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS       = 1 << 8,
   GIMP_EXPORT_NEEDS_ALPHA                    = 1 << 9,
-  GIMP_EXPORT_NEEDS_CROP                     = 1 << 10
+  GIMP_EXPORT_NEEDS_CROP                     = 1 << 10,
+  GIMP_EXPORT_CAN_HANDLE_CMYK                = 1 << 11
 } GimpExportCapabilities;
 
 

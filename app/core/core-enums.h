@@ -145,12 +145,23 @@ typedef enum /*< pdb-skip >*/
   GIMP_COMPONENT_MASK_GREEN = 1 << 1,
   GIMP_COMPONENT_MASK_BLUE  = 1 << 2,
   GIMP_COMPONENT_MASK_ALPHA = 1 << 3,
+  GIMP_COMPONENT_MASK_BLACK = 1 << 4,
 
   GIMP_COMPONENT_MASK_ALL = (GIMP_COMPONENT_MASK_RED   |
                              GIMP_COMPONENT_MASK_GREEN |
                              GIMP_COMPONENT_MASK_BLUE  |
-                             GIMP_COMPONENT_MASK_ALPHA)
+                             GIMP_COMPONENT_MASK_ALPHA |
+                             GIMP_COMPONENT_MASK_BLACK)
 } GimpComponentMask;
+
+/* CMYK component bits: cyan, magenta and yellow share the bits of red,
+ * green and blue, black has its own bit.  Masks of images without black
+ * always have GIMP_COMPONENT_MASK_BLACK set, so GIMP_COMPONENT_MASK_ALL
+ * keeps meaning "all components".  #defines, so mkenums doesn't see them.
+ */
+#define GIMP_COMPONENT_MASK_CYAN    GIMP_COMPONENT_MASK_RED
+#define GIMP_COMPONENT_MASK_MAGENTA GIMP_COMPONENT_MASK_GREEN
+#define GIMP_COMPONENT_MASK_YELLOW  GIMP_COMPONENT_MASK_BLUE
 
 
 #define GIMP_TYPE_CONTAINER_POLICY (gimp_container_policy_get_type ())
@@ -380,7 +391,11 @@ typedef enum
   GIMP_HISTOGRAM_BLUE      = 3,  /*< desc="Blue"          >*/
   GIMP_HISTOGRAM_ALPHA     = 4,  /*< desc="Alpha"         >*/
   GIMP_HISTOGRAM_LUMINANCE = 5,  /*< desc="Luminance"     >*/
-  GIMP_HISTOGRAM_RGB       = 6   /*< desc="RGB", pdb-skip >*/
+  GIMP_HISTOGRAM_RGB       = 6,  /*< desc="RGB", pdb-skip >*/
+  GIMP_HISTOGRAM_CYAN      = 7,  /*< desc="Cyan"          >*/
+  GIMP_HISTOGRAM_MAGENTA   = 8,  /*< desc="Magenta"       >*/
+  GIMP_HISTOGRAM_YELLOW    = 9,  /*< desc="Yellow"        >*/
+  GIMP_HISTOGRAM_BLACK     = 10  /*< desc="Black"         >*/
 } GimpHistogramChannel;
 
 
