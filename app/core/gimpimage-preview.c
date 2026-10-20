@@ -50,6 +50,10 @@ gimp_image_get_preview_format (GimpImage *image)
 
     case GIMP_INDEXED:
       return babl_format ("R'G'B'A u8");
+
+    case GIMP_CMYK:
+      /*  INTERFACES §10: previews of CMYK images are sRGB  */
+      return babl_format ("R'G'B'A u8");
     }
 
   g_return_val_if_reached (NULL);
