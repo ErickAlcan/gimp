@@ -476,6 +476,52 @@ i1_rgb_to_cmyk_structure (void)
 }
 
 static void
+i1_rgb_to_cmyk_real_profiles (void)
+{
+  const gchar *env = g_getenv ("GIMP_TESTING_CMYK_ICC");
+  gchar      **files;
+  gint         i;
+
+  if (! env || ! *env)
+    {
+      g_test_skip ("GIMP_TESTING_CMYK_ICC not set");
+      return;
+    }
+
+  files = g_strsplit (env, ":", -1);
+
+  for (i = 0; files[i]; i++)
+    {
+      GimpColorProfile *profile;
+      GimpImage        *image;
+      GFile            *file;
+      GError           *error = NULL;
+
+      file    = g_file_new_for_path (files[i]);
+      profile = gimp_color_profile_new_from_file (file, &error);
+      g_assert_no_error (error);
+      g_object_unref (file);
+
+      image = new_rgb_image (GIMP_PRECISION_U16_LINEAR, TRUE, NULL);
+
+      g_assert_true (gimp_image_convert_type_full (image, GIMP_CMYK, profile,
+                                                   GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                                   TRUE, NULL, &error));
+      g_assert_no_error (error);
+      assert_cmyk_image (image, profile);
+
+      g_assert_true (gimp_image_convert_type (image, GIMP_RGB, NULL, NULL, &error));
+      g_assert_no_error (error);
+      g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_RGB);
+
+      g_object_unref (image);
+      g_object_unref (profile);
+    }
+
+  g_strfreev (files);
+}
+
+static void
 i1_rgb_to_cmyk_lcms (void)
 {
   GimpColorProfile *profile;
@@ -1622,6 +1668,44 @@ i11_rgb_cmyk_paste (void)
       assert_u16_close (g_bytes_get_data (result, NULL), expected,
                         N_RGB_PATCHES * 4, 2);
     }
+  /*  pasting an RGB buffer into the CMYK image takes the same path
+   *  (gimp_layer_new_from_buffer(), PERCEPTUAL + BPC)
+   */
+  {
+    GimpBuffer *buffer;
+    GimpLayer  *pasted;
+    GBytes     *pasted_bytes;
+
+    buffer = gimp_buffer_new (gimp_drawable_get_buffer (GIMP_DRAWABLE (rgb_layer)),
+                              "rgb", 0, 0, TRUE);
+    gimp_buffer_set_color_profile (buffer, srgb);
+
+    pasted = paste_one (cmyk_image, NULL, GIMP_OBJECT (buffer),
+                        GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
+    g_assert_true (gimp_drawable_is_cmyk (GIMP_DRAWABLE (pasted)));
+    pasted_bytes = read_bytes (GIMP_DRAWABLE (pasted), NULL,
+                               babl_format_with_space ("CMYK u16",
+                                                       gimp_image_get_layer_space (cmyk_image)));
+    assert_bytes_equal (result, pasted_bytes);
+    g_bytes_unref (pasted_bytes);
+
+    /*  as floating selection: the target's format with alpha (I3)  */
+    pasted = paste_one (cmyk_image, GIMP_DRAWABLE (cmyk_layer), GIMP_OBJECT (buffer),
+                        GIMP_PASTE_TYPE_FLOATING_IN_PLACE);
+    g_assert_true (gimp_layer_is_floating_sel (pasted));
+    g_assert_true (gimp_drawable_get_format (GIMP_DRAWABLE (pasted)) ==
+                   gimp_drawable_get_format_with_alpha (GIMP_DRAWABLE (cmyk_layer)));
+    pasted_bytes = read_bytes (GIMP_DRAWABLE (pasted), NULL,
+                               babl_format_with_space ("CMYK u16",
+                                                       gimp_image_get_layer_space (cmyk_image)));
+    assert_bytes_equal (result, pasted_bytes);
+    g_bytes_unref (pasted_bytes);
+
+    gimp_image_remove_layer (cmyk_image, pasted, FALSE, NULL);
+
+    g_object_unref (buffer);
+  }
+
   g_bytes_unref (result);
   g_object_unref (converted);
 
@@ -1925,6 +2009,7 @@ main (int    argc,
   gimp = gimp_init_for_testing ();
 
   g_test_add_func ("/cmyk-image/I1/rgb-to-cmyk",            i1_rgb_to_cmyk_structure);
+  g_test_add_func ("/cmyk-image/I1/rgb-to-cmyk-profiles",   i1_rgb_to_cmyk_real_profiles);
   g_test_add_func ("/cmyk-image/I1/rgb-to-cmyk-lcms",       i1_rgb_to_cmyk_lcms);
   g_test_add_func ("/cmyk-image/I2/undo-redo",              i2_undo_redo);
   g_test_add_func ("/cmyk-image/I2/undo-redo-group",        i2_undo_redo_group);
