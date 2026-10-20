@@ -417,7 +417,7 @@ sRGB) within 2/255 (test C10). If a transform cannot be created, fall back to ba
 * Paint (02): `DoLayerBlend` uses `gimp_layer_mode_get_operation_for_format (paint_mode,
   paint_buf_format)`. Paint/fill code maps legacy paint modes with
   `gimp_layer_mode_get_non_legacy()` when the drawable is CMYK. MyPaint brush: refused on CMYK
-  drawables (`gimp_paint_core_start()` returns FALSE with "MyPaint Brush does not support CMYK
+  drawables (`gimp_mybrush_core_start()` returns FALSE with "MyPaint Brush does not support CMYK
   layers"; the tool is insensitive, owner 08). Smudge accumulates in `CMYKA float` (image
   space) for CMYK; heal works in the drawable's float format; `gimp_gegl_convolve()` uses
   `total[MAX_CHANNELS]`.

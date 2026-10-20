@@ -55,7 +55,7 @@ Goldens are SHA-1s in `app/tests/layer-modes-golden.h`, written by running the t
 | id | test | expectation |
 |---|---|---|
 | G1 | 32×32 RGB images at U16 and FLOAT and a GRAY U16 image: deterministic (seeded) backdrop, top layer with varying alpha; for every mode with `GIMP_LAYER_MODE_CONTEXT_LAYER` (legacy included) × composite mode {AUTO + the 4 if mutable} × composite space {AUTO + 3 RGB if mutable}: projection bytes | SHA-1 equals golden |
-| G2 | RGB U16 32×32 drawable; for every mode with `CONTEXT_PAINT`: one fixed `gimp-paintbrush` stroke (PDB, fixed brush/size/FG) | SHA-1 of drawable equals golden |
+| G2 | RGB U16 32×32 drawable; for every mode with `CONTEXT_PAINT`: one fixed paintbrush stroke (PDB `gimp-paintbrush`, or `gimp_paint_core_stroke()` if the test harness has no PDB; fixed brush/size/FG) | SHA-1 of drawable equals golden |
 | G3 | RGB U16 image with alpha layers + one Multiply layer: flatten; merge-down; `gimp_gegl_apply_flatten` on a layer | SHA-1 equals golden |
 
 ### F — `app/tests/test-cmyk-foundation.c` (owner 01a for F1–F7 and F12, 01b for F8–F11 final)

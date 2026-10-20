@@ -31,8 +31,8 @@ Prototype/probe programs: `/root/review-scratch/` (reviewer's `*.c`, plus rev-2
 | Item | Status | Where |
 |---|---|---|
 | B1 same-profile re-separation | Resolved | I8; INTERFACES §3.1–3.4, §11; WS01a/01b/03; tests F8–F9, I9–I10, X3 |
-| B2 paint core unprepared op | Resolved | INTERFACES §8.2; WS02 step 4; tests G2, C9 |
-| B3 composite-space contract | Resolved | INTERFACES §8.2–8.3; WS02 steps 2, 6; tests C1, C8 |
+| B2 paint core unprepared op | Resolved | INTERFACES §8.2; WS02 step 5; tests G2, C9 |
+| B3 composite-space contract | Resolved | INTERFACES §8.2–8.3; WS02 steps 2, 7; tests C1, C8, C13 |
 | M1 two-stride real_process / blend fns | Resolved | INTERFACES §8.4; WS02 step 3 |
 | M2 performance | Resolved | INTERFACES §8.5; WS02 acceptance P1/P2 |
 | M3 libgimpcolor holes | Resolved (K-preserving intents **Deferred**: new intent enum values ripple through PDB/UI/config; post-MVP) | INTERFACES §3.3, §3.5; WS01b |
