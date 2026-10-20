@@ -223,6 +223,12 @@ gimp_view_renderer_image_render (GimpViewRenderer *renderer,
     case GIMP_CHANNEL_INDEXED: icon_name = GIMP_ICON_CHANNEL_INDEXED; break;
     case GIMP_CHANNEL_ALPHA:   icon_name = GIMP_ICON_CHANNEL_ALPHA;   break;
 
+    /*  there are no ink icons, use the generic component icon  */
+    case GIMP_CHANNEL_CYAN:
+    case GIMP_CHANNEL_MAGENTA:
+    case GIMP_CHANNEL_YELLOW:
+    case GIMP_CHANNEL_BLACK:   icon_name = GIMP_ICON_CHANNEL_GRAY;    break;
+
     default:
       icon_name = gimp_viewable_get_icon_name (renderer->viewable);
       break;
