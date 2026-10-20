@@ -96,6 +96,14 @@ static void   image_convert_gray_callback      (GtkWidget                *dialog
                                                 gboolean                  bpc,
                                                 gpointer                  user_data);
 
+static void   image_convert_cmyk_callback      (GtkWidget                *dialog,
+                                                GimpImage                *image,
+                                                GimpColorProfile         *new_profile,
+                                                GFile                    *new_file,
+                                                GimpColorRenderingIntent  intent,
+                                                gboolean                  bpc,
+                                                gpointer                  user_data);
+
 static void   image_convert_indexed_callback   (GtkWidget              *dialog,
                                                 GimpImage              *image,
                                                 GimpConvertPaletteType  palette_type,
@@ -314,7 +322,8 @@ image_convert_base_type_cmd_callback (GimpAction *action,
                                              widget,
                                              current_profile,
                                              default_profile,
-                                             0, 0,
+                                             config->image_convert_profile_intent,
+                                             config->image_convert_profile_bpc,
                                              callback,
                                              display);
         }
@@ -327,7 +336,39 @@ image_convert_base_type_cmd_callback (GimpAction *action,
         }
       break;
 
+    case GIMP_CMYK:
+      if (! gimp_babl_has_cmyk_support ())
+        {
+          gimp_message_literal (image->gimp,
+                                G_OBJECT (widget), GIMP_MESSAGE_WARNING,
+                                _("CMYK images are not supported: babl was "
+                                  "built without color management (lcms)."));
+          break;
+        }
+
+      /*  the dialog determines and shows the default CMYK profile  */
+      dialog = color_profile_dialog_new (COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK,
+                                         image,
+                                         action_data_get_context (data),
+                                         widget,
+                                         gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image)),
+                                         NULL,
+                                         config->image_convert_profile_intent,
+                                         config->image_convert_profile_bpc,
+                                         image_convert_cmyk_callback,
+                                         display);
+      break;
+
     case GIMP_INDEXED:
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          /*  the action is insensitive, but be safe  */
+          gimp_message_literal (image->gimp,
+                                G_OBJECT (widget), GIMP_MESSAGE_WARNING,
+                                _("Convert the image to RGB first."));
+          break;
+        }
+
       dialog = convert_indexed_dialog_new (image,
                                            action_data_get_context (data),
                                            widget,
@@ -454,6 +495,20 @@ image_color_profile_use_srgb_cmd_callback (GimpAction *action,
     }
 }
 
+/*  The profile used when "no profile" is selected in the assign and
+ *  convert dialogs. For CMYK images that is the default CMYK profile
+ *  (preferred CMYK profile if usable, else the built-in one), matching
+ *  the label of gimp_color_profile_store_add_defaults().
+ */
+static GimpColorProfile *
+image_get_default_profile (GimpImage *image)
+{
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    return gimp_get_default_cmyk_profile (image->gimp, NULL, NULL);
+
+  return g_object_ref (gimp_image_get_builtin_color_profile (image));
+}
+
 void
 image_color_profile_assign_cmd_callback (GimpAction *action,
                                          GVariant   *value,
@@ -477,7 +532,7 @@ image_color_profile_assign_cmd_callback (GimpAction *action,
       GimpColorProfile *default_profile;
 
       current_profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
-      default_profile = gimp_image_get_builtin_color_profile (image);
+      default_profile = image_get_default_profile (image);
 
       dialog = color_profile_dialog_new (COLOR_PROFILE_DIALOG_ASSIGN_PROFILE,
                                          image,
@@ -488,6 +543,7 @@ image_color_profile_assign_cmd_callback (GimpAction *action,
                                          0, 0,
                                          image_profile_assign_callback,
                                          display);
+      g_object_unref (default_profile);
 
       dialogs_attach_dialog (G_OBJECT (image),
                              PROFILE_ASSIGN_DIALOG_KEY, dialog);
@@ -520,7 +576,7 @@ image_color_profile_convert_cmd_callback (GimpAction *action,
       GimpColorProfile *default_profile;
 
       current_profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
-      default_profile = gimp_image_get_builtin_color_profile (image);
+      default_profile = image_get_default_profile (image);
 
       dialog = color_profile_dialog_new (COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE,
                                          image,
@@ -532,6 +588,7 @@ image_color_profile_convert_cmd_callback (GimpAction *action,
                                          config->image_convert_profile_bpc,
                                          image_profile_convert_callback,
                                          display);
+      g_object_unref (default_profile);
 
       dialogs_attach_dialog (G_OBJECT (image),
                              PROFILE_CONVERT_DIALOG_KEY, dialog);
@@ -1075,6 +1132,36 @@ image_properties_cmd_callback (GimpAction *action,
 
 /*  private functions  */
 
+/*  Conversions from CMYK use the intent and BPC chosen in the dialog
+ *  (the dialog only shows them for CMYK images), other conversions
+ *  keep their historical behaviour.
+ */
+static gboolean
+image_convert_type_full (GimpImage                *image,
+                         GimpImageBaseType         base_type,
+                         GimpColorProfile         *new_profile,
+                         GimpColorRenderingIntent  intent,
+                         gboolean                  bpc,
+                         GimpProgress             *progress,
+                         GError                  **error)
+{
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      GimpDialogConfig *config = GIMP_DIALOG_CONFIG (image->gimp->config);
+
+      g_object_set (config,
+                    "image-convert-profile-intent",                   intent,
+                    "image-convert-profile-black-point-compensation", bpc,
+                    NULL);
+
+      return gimp_image_convert_type_full (image, base_type, new_profile,
+                                           intent, bpc, progress, error);
+    }
+
+  return gimp_image_convert_type (image, base_type, new_profile,
+                                  progress, error);
+}
+
 static void
 image_convert_rgb_callback (GtkWidget                *dialog,
                             GimpImage                *image,
@@ -1091,8 +1178,8 @@ image_convert_rgb_callback (GtkWidget                *dialog,
                                   _("Converting to RGB (%s)"),
                                   gimp_color_profile_get_label (new_profile));
 
-  if (! gimp_image_convert_type (image, GIMP_RGB, new_profile,
-                                 progress, &error))
+  if (! image_convert_type_full (image, GIMP_RGB, new_profile,
+                                 intent, bpc, progress, &error))
     {
       gimp_message (image->gimp, G_OBJECT (dialog),
                     GIMP_MESSAGE_ERROR,
@@ -1129,8 +1216,52 @@ image_convert_gray_callback (GtkWidget                *dialog,
                                   _("Converting to grayscale (%s)"),
                                   gimp_color_profile_get_label (new_profile));
 
-  if (! gimp_image_convert_type (image, GIMP_GRAY, new_profile,
-                                 progress, &error))
+  if (! image_convert_type_full (image, GIMP_GRAY, new_profile,
+                                 intent, bpc, progress, &error))
+    {
+      gimp_message (image->gimp, G_OBJECT (dialog),
+                    GIMP_MESSAGE_ERROR,
+                    "%s", error->message);
+      g_clear_error (&error);
+
+      if (progress)
+        gimp_progress_end (progress);
+
+      return;
+    }
+
+  if (progress)
+    gimp_progress_end (progress);
+
+  gimp_image_flush (image);
+
+  gtk_widget_destroy (dialog);
+}
+
+static void
+image_convert_cmyk_callback (GtkWidget                *dialog,
+                             GimpImage                *image,
+                             GimpColorProfile         *new_profile,
+                             GFile                    *new_file,
+                             GimpColorRenderingIntent  intent,
+                             gboolean                  bpc,
+                             gpointer                  user_data)
+{
+  GimpProgress     *progress = user_data;
+  GimpDialogConfig *config   = GIMP_DIALOG_CONFIG (image->gimp->config);
+  GError           *error    = NULL;
+
+  g_object_set (config,
+                "image-convert-profile-intent",                   intent,
+                "image-convert-profile-black-point-compensation", bpc,
+                NULL);
+
+  progress = gimp_progress_start (progress, FALSE,
+                                  _("Converting to CMYK (%s)"),
+                                  gimp_color_profile_get_label (new_profile));
+
+  if (! gimp_image_convert_type_full (image, GIMP_CMYK, new_profile,
+                                      intent, bpc, progress, &error))
     {
       gimp_message (image->gimp, G_OBJECT (dialog),
                     GIMP_MESSAGE_ERROR,
