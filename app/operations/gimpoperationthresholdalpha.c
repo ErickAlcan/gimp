@@ -27,6 +27,8 @@
 
 #include "operations-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpoperationthresholdalpha.h"
 
 #include "gimp-intl.h"
@@ -144,8 +146,16 @@ static void
 gimp_operation_threshold_alpha_prepare (GeglOperation *operation)
 {
   const Babl *space = gegl_operation_get_source_space (operation, "input");
-  gegl_operation_set_format (operation, "input",  babl_format_with_space ("RGBA float", space));
-  gegl_operation_set_format (operation, "output", babl_format_with_space ("RGBA float", space));
+  const Babl *format;
+
+  /* CMYK input stays CMYK: only alpha changes */
+  if (gimp_babl_space_is_cmyk (space))
+    format = babl_format_with_space ("CMYKA float", space);
+  else
+    format = babl_format_with_space ("RGBA float", space);
+
+  gegl_operation_set_format (operation, "input",  format);
+  gegl_operation_set_format (operation, "output", format);
 }
 
 static gboolean
@@ -159,6 +169,25 @@ gimp_operation_threshold_alpha_process (GeglOperation       *operation,
   GimpOperationThresholdAlpha *self = GIMP_OPERATION_THRESHOLD_ALPHA (operation);
   gfloat                      *src  = in_buf;
   gfloat                      *dest = out_buf;
+
+  if (babl_format_get_n_components (gegl_operation_get_format (operation,
+                                                               "output")) == 5)
+    {
+      /* CMYKA */
+      while (samples--)
+        {
+          dest[CYAN]    = src[CYAN];
+          dest[MAGENTA] = src[MAGENTA];
+          dest[YELLOW]  = src[YELLOW];
+          dest[BLACK]   = src[BLACK];
+          dest[ALPHA_C] = src[ALPHA_C] > self->value ? 1.0 : 0.0;
+
+          src  += 5;
+          dest += 5;
+        }
+
+      return TRUE;
+    }
 
   while (samples--)
     {

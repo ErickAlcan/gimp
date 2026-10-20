@@ -32,6 +32,7 @@
 
 #include "../operations-types.h"
 
+#include "gimpoperationlayermode.h"
 #include "gimpoperationlayermode-blend.h"
 
 
@@ -86,8 +87,7 @@ gimp_operation_layer_mode_blend_addition (GeglOperation *operation,
                                           gfloat        *comp,
                                           gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -115,8 +115,7 @@ gimp_operation_layer_mode_blend_burn (GeglOperation *operation,
                                       gfloat        *comp,
                                       gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -144,8 +143,7 @@ gimp_operation_layer_mode_blend_darken_only (GeglOperation *operation,
                                              gfloat        *comp,
                                              gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -173,8 +171,7 @@ gimp_operation_layer_mode_blend_difference (GeglOperation *operation,
                                             gfloat        *comp,
                                             gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -202,8 +199,7 @@ gimp_operation_layer_mode_blend_divide (GeglOperation *operation,
                                         gfloat        *comp,
                                         gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -231,8 +227,7 @@ gimp_operation_layer_mode_blend_dodge (GeglOperation *operation,
                                        gfloat        *comp,
                                        gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -260,8 +255,7 @@ gimp_operation_layer_mode_blend_exclusion (GeglOperation *operation,
                                            gfloat        *comp,
                                            gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -289,8 +283,7 @@ gimp_operation_layer_mode_blend_grain_extract (GeglOperation *operation,
                                                gfloat        *comp,
                                                gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -318,8 +311,7 @@ gimp_operation_layer_mode_blend_grain_merge (GeglOperation *operation,
                                              gfloat        *comp,
                                              gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -347,8 +339,7 @@ gimp_operation_layer_mode_blend_hard_mix (GeglOperation *operation,
                                           gfloat        *comp,
                                           gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -376,8 +367,7 @@ gimp_operation_layer_mode_blend_hardlight (GeglOperation *operation,
                                            gfloat        *comp,
                                            gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -773,8 +763,7 @@ gimp_operation_layer_mode_blend_lighten_only (GeglOperation *operation,
                                               gfloat        *comp,
                                               gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -802,8 +791,7 @@ gimp_operation_layer_mode_blend_linear_burn (GeglOperation *operation,
                                              gfloat        *comp,
                                              gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -833,8 +821,7 @@ gimp_operation_layer_mode_blend_linear_light (GeglOperation *operation,
                                               gfloat        *comp,
                                               gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -871,7 +858,7 @@ gimp_operation_layer_mode_blend_luma_darken_only (GeglOperation *operation,
                                                   gfloat        *comp,
                                                   gint           samples)
 {
-  const Babl *space  = gegl_operation_get_source_space (operation, "input");
+  const Babl *space  = gimp_operation_layer_mode_get_blend_babl_space (GIMP_OPERATION_LAYER_MODE (operation));
   double red_luminance, green_luminance, blue_luminance;
   babl_space_get_rgb_luminance (space,
     &red_luminance, &green_luminance, &blue_luminance);
@@ -919,7 +906,7 @@ gimp_operation_layer_mode_blend_luma_lighten_only (GeglOperation *operation,
                                                    gfloat        *comp,
                                                    gint           samples)
 {
-  const Babl *space  = gegl_operation_get_source_space (operation, "input");
+  const Babl *space  = gimp_operation_layer_mode_get_blend_babl_space (GIMP_OPERATION_LAYER_MODE (operation));
   double red_luminance, green_luminance, blue_luminance;
   babl_space_get_rgb_luminance (space,
     &red_luminance, &green_luminance, &blue_luminance);
@@ -971,9 +958,9 @@ gimp_operation_layer_mode_blend_luminance (GeglOperation *operation,
   gfloat     *scratch;
   gfloat     *in_Y;
   gfloat     *layer_Y;
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const Babl *space        = gegl_operation_get_source_space (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const Babl *format       = gimp_operation_layer_mode_get_blend_format (GIMP_OPERATION_LAYER_MODE (operation));
+  const Babl *space        = gimp_operation_layer_mode_get_blend_babl_space (GIMP_OPERATION_LAYER_MODE (operation));
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   fish = babl_fish (format, babl_format_with_space ("Y float", space));
@@ -1016,8 +1003,7 @@ gimp_operation_layer_mode_blend_multiply (GeglOperation *operation,
                                           gfloat        *comp,
                                           gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1045,8 +1031,7 @@ gimp_operation_layer_mode_blend_overlay (GeglOperation *operation,
                                          gfloat        *comp,
                                          gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1084,8 +1069,7 @@ gimp_operation_layer_mode_blend_pin_light (GeglOperation *operation,
                                            gfloat        *comp,
                                            gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1122,8 +1106,7 @@ gimp_operation_layer_mode_blend_screen (GeglOperation *operation,
                                         gfloat        *comp,
                                         gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1151,8 +1134,7 @@ gimp_operation_layer_mode_blend_softlight (GeglOperation *operation,
                                            gfloat        *comp,
                                            gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1185,8 +1167,7 @@ gimp_operation_layer_mode_blend_subtract (GeglOperation *operation,
                                           gfloat        *comp,
                                           gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1216,8 +1197,7 @@ gimp_operation_layer_mode_blend_vivid_light (GeglOperation *operation,
                                              gfloat        *comp,
                                              gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)
@@ -1269,8 +1249,7 @@ gimp_operation_layer_mode_blend_color_erase (GeglOperation *operation,
                                              gfloat        *comp,
                                              gint           samples)
 {
-  const Babl *format       = gegl_operation_get_format (operation, "input");
-  const gint  n_components = babl_format_get_n_components (format);
+  const gint  n_components = 4;
   const gint  alpha        = n_components - 1;
 
   while (samples--)

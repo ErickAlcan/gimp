@@ -438,6 +438,21 @@ sRGB) within 2/255 (test C10). If a transform cannot be created, fall back to ba
   4-colour). Bucket fill / edit fill with a color set the native pixel (exact if the GeglColor
   is in the image space).
 
+### 8.7 Implementation notes / deviations (02)
+* `gimp_layer_mode_get_non_legacy (GIMP_LAYER_MODE_OVERLAY_LEGACY)` returns
+  `GIMP_LAYER_MODE_SOFTLIGHT`, not OVERLAY: "Old broken Overlay" runs the same op as Soft
+  light (legacy) (`gimp:softlight-legacy`), so SOFTLIGHT keeps the look. All other legacy modes
+  map to the same-named mode.
+* Additional (02-internal) API: `gimp_operation_layer_mode_get_blend_babl_space (op)` (NULL
+  when `op->cmyk`, else the "input" source space; used by the luma/luminance blend functions),
+  `gimp_operation_layer_mode_set_fixed_format (op, format)` (used by
+  `gimp_layer_mode_get_operation_for_format()`), `gimp_layer_mode_cmyk_converter_uses_transforms
+  (conv)` (tests/diagnostics).
+* The converter keeps alpha exact (copied as float, not through the u16 transforms).
+* Legacy paint/fill modes are mapped in `gimp_paint_core_get_paint_buffer()`,
+  `gimp_paint_core_paste()`, the brush/ink `get_paint_buffer` vfuncs, `gimp_fill_options_get_format()`
+  and `gimp_drawable_real_apply_buffer()` (covers every fill/edit/bucket/floating path).
+
 ---------------------------------------------------------------------------------------------
 ## 9. Histogram contract (owner 08)
 CMYK drawables: `GimpHistogram` n_components 5 (C,M,Y,K,A), computed on `CMYKA float (space)`.

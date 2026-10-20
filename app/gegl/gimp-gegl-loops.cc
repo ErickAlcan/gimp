@@ -302,7 +302,7 @@ gimp_gegl_convolve (GeglBuffer          *src_buffer,
                   for (x = dest_x1; x < dest_x2; x++)
                     {
                       const gfloat *m                = kernel;
-                      gdouble       total[4]         = { 0.0, 0.0, 0.0, 0.0 };
+                      gdouble       total[MAX_CHANNELS] = { 0.0, };
                       gdouble       weighted_divisor = 0.0;
                       gint          i, j, b;
 
@@ -353,7 +353,7 @@ gimp_gegl_convolve (GeglBuffer          *src_buffer,
                   for (x = dest_x1; x < dest_x2; x++)
                     {
                       const gfloat *m        = kernel;
-                      gdouble       total[4] = { 0.0, 0.0, 0.0, 0.0 };
+                      gdouble       total[MAX_CHANNELS] = { 0.0, };
                       gint          i, j, b;
 
                       for (j = y - margin; j <= y + margin; j++)
@@ -542,26 +542,28 @@ gimp_gegl_smudge_with_paint_blend (const gfloat *src1,
                                    const gfloat *src2,
                                    gfloat        src2_rate,
                                    gfloat       *dest,
-                                   gboolean      no_erasing_src2)
+                                   gboolean      no_erasing_src2,
+                                   gint          n_components)
 {
-  gfloat orginal_src2_alpha;
-  gfloat src1_alpha;
-  gfloat src2_alpha;
-  gfloat result_alpha;
-  gint   b;
+  const gint alpha = n_components - 1;
+  gfloat     orginal_src2_alpha;
+  gfloat     src1_alpha;
+  gfloat     src2_alpha;
+  gfloat     result_alpha;
+  gint       b;
 
-  orginal_src2_alpha = src2[3];
-  src1_alpha         = src1_rate * src1[3];
+  orginal_src2_alpha = src2[alpha];
+  src1_alpha         = src1_rate * src1[alpha];
   src2_alpha         = src2_rate * orginal_src2_alpha;
   result_alpha       = src1_alpha + src2_alpha;
 
   if (result_alpha == 0)
     {
-      memset (dest, 0, sizeof (gfloat) * 4);
+      memset (dest, 0, sizeof (gfloat) * n_components);
       return;
     }
 
-  for (b = 0; b < 3; b++)
+  for (b = 0; b < alpha; b++)
     dest[b] = (src1[b] * src1_alpha + src2[b] * src2_alpha) / result_alpha;
 
   if (no_erasing_src2)
@@ -569,7 +571,7 @@ gimp_gegl_smudge_with_paint_blend (const gfloat *src1,
       result_alpha = MAX (result_alpha, orginal_src2_alpha);
     }
 
-  dest[3] = result_alpha;
+  dest[alpha] = result_alpha;
 }
 
 /* helper function of gimp_gegl_smudge_with_paint() */
@@ -582,34 +584,106 @@ gimp_gegl_smudge_with_paint_process (gfloat       *accum,
                                      gfloat        brush_a,
                                      gboolean      no_erasing,
                                      gfloat        flow,
-                                     gfloat        rate)
+                                     gfloat        rate,
+                                     gint          n_components)
 {
   while (count--)
     {
       /* blend accum_buffer and canvas_buffer to accum_buffer */
       gimp_gegl_smudge_with_paint_blend (accum, rate, canvas, 1 - rate,
-                                         accum, no_erasing);
+                                         accum, no_erasing, n_components);
 
       /* blend accum_buffer and brush color/pixmap to paint_buffer */
       if (brush_a == 0) /* pure smudge */
         {
-          memcpy (paint, accum, sizeof (gfloat) * 4);
+          memcpy (paint, accum, sizeof (gfloat) * n_components);
         }
       else
         {
           const gfloat *src1 = brush_color ? brush_color : paint;
 
           gimp_gegl_smudge_with_paint_blend (src1, flow, accum, 1 - flow,
-                                             paint, no_erasing);
+                                             paint, no_erasing, n_components);
         }
 
-      accum  += 4;
-      canvas += 4;
-      paint  += 4;
+      accum  += n_components;
+      canvas += n_components;
+      paint  += n_components;
     }
 }
 
-/*  smudge painting calculation. Currently only smudge tool uses this function
+/* CMYK variant of gimp_gegl_smudge_with_paint(): works in the format of
+ * accum_buffer ("CMYKA float" in the image space), 5 components, no SSE2.
+ */
+static void
+gimp_gegl_smudge_with_paint_cmyk (GeglBuffer          *accum_buffer,
+                                  const GeglRectangle *accum_rect,
+                                  GeglBuffer          *canvas_buffer,
+                                  const GeglRectangle *canvas_rect,
+                                  GeglColor           *brush_color,
+                                  GeglBuffer          *paint_buffer,
+                                  gboolean             no_erasing,
+                                  gdouble              flow,
+                                  gdouble              rate)
+{
+  const Babl     *format = gegl_buffer_get_format (accum_buffer);
+  gfloat          brush_color_float[MAX_CHANNELS];
+  gfloat          brush_a = flow;
+  GeglAccessMode  paint_buffer_access_mode = (brush_color ?
+                                              GEGL_ACCESS_WRITE :
+                                              GEGL_ACCESS_READWRITE);
+
+  g_return_if_fail (babl_format_get_n_components (format) == 5);
+
+  if (brush_color)
+    {
+      gegl_color_get_pixel (brush_color, format, brush_color_float);
+      brush_a *= brush_color_float[4];
+    }
+
+  gegl_parallel_distribute_area (
+    accum_rect, PIXELS_PER_THREAD,
+    [=] (const GeglRectangle *accum_area)
+    {
+      GeglBufferIterator *iter;
+
+      SHIFTED_AREA (canvas, accum);
+
+      iter = gegl_buffer_iterator_new (accum_buffer, accum_area, 0,
+                                       format,
+                                       GEGL_ACCESS_READWRITE, GEGL_ABYSS_NONE, 3);
+
+      gegl_buffer_iterator_add (iter, canvas_buffer, canvas_area, 0,
+                                format,
+                                GEGL_ACCESS_READ, GEGL_ABYSS_NONE);
+
+      gegl_buffer_iterator_add (iter, paint_buffer,
+                                GEGL_RECTANGLE (accum_area->x - accum_rect->x,
+                                                accum_area->y - accum_rect->y,
+                                                0, 0),
+                                0,
+                                format,
+                                paint_buffer_access_mode, GEGL_ABYSS_NONE);
+
+      while (gegl_buffer_iterator_next (iter))
+        {
+          gimp_gegl_smudge_with_paint_process ((gfloat *)       iter->items[0].data,
+                                               (const gfloat *) iter->items[1].data,
+                                               (gfloat *)       iter->items[2].data,
+                                               iter->length,
+                                               brush_color ? brush_color_float :
+                                                             NULL,
+                                               brush_a,
+                                               no_erasing, flow, rate,
+                                               5);
+        }
+    });
+}
+
+/*  smudge painting calculation. Currently only smudge tool uses this function.
+ *  The work format is the format of accum_buffer: "RGBA float", or
+ *  "CMYKA float" (image space) for CMYK drawables, so that smudging CMYK
+ *  never goes through RGB.
  *  Accum = rate*Accum + (1-rate)*Canvas
  *  if brush_color!=NULL
  *    Paint = flow*brushColor + (1-flow)*Accum
@@ -642,6 +716,15 @@ gimp_gegl_smudge_with_paint (GeglBuffer          *accum_buffer,
 
   if (! canvas_rect)
     canvas_rect = gegl_buffer_get_extent (canvas_buffer);
+
+  if (gimp_babl_format_is_cmyk (gegl_buffer_get_format (accum_buffer)))
+    {
+      gimp_gegl_smudge_with_paint_cmyk (accum_buffer, accum_rect,
+                                        canvas_buffer, canvas_rect,
+                                        brush_color, paint_buffer,
+                                        no_erasing, flow, rate);
+      return;
+    }
 
   /* convert brush color to linear RGBA float */
   if (brush_color)
@@ -700,7 +783,8 @@ gimp_gegl_smudge_with_paint (GeglBuffer          *accum_buffer,
                                                    brush_color ? brush_color_float :
                                                                  NULL,
                                                    brush_a,
-                                                   no_erasing, flow, rate);
+                                                   no_erasing, flow, rate,
+                                                   4);
             }
         }
     });
@@ -719,6 +803,14 @@ gimp_gegl_apply_mask (GeglBuffer          *mask_buffer,
   if (! dest_rect)
     dest_rect = gegl_buffer_get_extent (dest_buffer);
 
+  /* CMYK buffers keep their inks: only alpha is multiplied */
+  const gboolean  cmyk        = gimp_babl_format_is_cmyk (gegl_buffer_get_format (dest_buffer));
+  const Babl     *dest_format = cmyk ?
+                                babl_format_with_space ("CMYKA float",
+                                                        gegl_buffer_get_format (dest_buffer)) :
+                                babl_format ("RGBA float");
+  const gint      n           = cmyk ? 5 : 4;
+
   gegl_parallel_distribute_area (
     mask_rect, PIXELS_PER_THREAD,
     [=] (const GeglRectangle *mask_area)
@@ -732,7 +824,7 @@ gimp_gegl_apply_mask (GeglBuffer          *mask_buffer,
                                        GEGL_ACCESS_READ, GEGL_ABYSS_NONE, 2);
 
       gegl_buffer_iterator_add (iter, dest_buffer, dest_area, 0,
-                                babl_format ("RGBA float"),
+                                dest_format,
                                 GEGL_ACCESS_READWRITE, GEGL_ABYSS_NONE);
 
       while (gegl_buffer_iterator_next (iter))
@@ -743,10 +835,10 @@ gimp_gegl_apply_mask (GeglBuffer          *mask_buffer,
 
           while (count--)
             {
-              dest[3] *= *mask * opacity;
+              dest[n - 1] *= *mask * opacity;
 
               mask += 1;
-              dest += 4;
+              dest += n;
             }
         }
     });
@@ -1077,6 +1169,19 @@ gimp_gegl_convert_color_profile (GeglBuffer               *src_buffer,
 
       g_object_unref (transform);
     }
+  else if (gimp_color_profile_is_cmyk (dest_profile) &&
+           ! gimp_color_profile_is_cmyk_bidirectional (dest_profile))
+    {
+      /* no transform to an input-only CMYK profile: don't fall back to a
+       * babl conversion either, babl crashes on RGB -> CMYK with such a
+       * profile (INTERFACES §3.2)
+       */
+      g_printerr ("%s: cannot convert to an input-only CMYK profile\n",
+                  G_STRFUNC);
+
+      if (progress)
+        gimp_progress_set_value (progress, 1.0);
+    }
   else
     {
       gimp_gegl_buffer_copy (src_buffer,  src_rect, GEGL_ABYSS_NONE,
@@ -1097,11 +1202,12 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
 {
   typedef struct
   {
-    gfloat color[4];
+    gfloat color[MAX_CHANNELS];
     gint   n;
   } Sum;
 
   const Babl    *average_format;
+  gint           n_components = 4;
   GeglRectangle  roi;
   GSList        *sums    = NULL;
   GSList        *list;
@@ -1111,8 +1217,25 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
   g_return_if_fail (GEGL_IS_BUFFER (buffer));
   g_return_if_fail (color != NULL);
 
-  average_format = babl_format_with_space ("RaGaBaA float",
-                                           babl_format_get_space (format));
+  if (gimp_babl_format_is_cmyk (gegl_buffer_get_format (buffer)))
+    {
+      /* CMYK buffers are averaged natively (premultiplied inks in the
+       * buffer's space), not through RGB (PLAN §5)
+       */
+      const Babl *space = gegl_buffer_get_format (buffer);
+
+      if (babl_format_exists ("CaMaYaKaA float"))
+        average_format = babl_format_with_space ("CaMaYaKaA float", space);
+      else
+        average_format = babl_format_with_space ("CMYKA float", space);
+
+      n_components = 5;
+    }
+  else
+    {
+      average_format = babl_format_with_space ("RaGaBaA float",
+                                               babl_format_get_space (format));
+    }
 
   if (! rect)
     rect = gegl_buffer_get_extent (buffer);
@@ -1131,8 +1254,8 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
     {
       Sum                *sum;
       GeglBufferIterator *iter;
-      gfloat              color[4] = {};
-      gint                n        = 0;
+      gfloat              color[MAX_CHANNELS] = {};
+      gint                n                   = 0;
 
       iter = gegl_buffer_iterator_new (buffer, area, 0, average_format,
                                        GEGL_BUFFER_READ, abyss_policy, 1);
@@ -1146,10 +1269,10 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
             {
               gint c;
 
-              for (c = 0; c < 4; c++)
+              for (c = 0; c < n_components; c++)
                 color[c] += p[c];
 
-              p += 4;
+              p += n_components;
             }
 
           n += iter->length;
@@ -1167,7 +1290,7 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
     {
       Sum *sum = (Sum *) list->data;
 
-      for (c = 0; c < 4; c++)
+      for (c = 0; c < n_components; c++)
         average.color[c] += sum->color[c];
 
       average.n += sum->n;
@@ -1179,7 +1302,7 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
 
   if (average.n > 0)
     {
-      for (c = 0; c < 4; c++)
+      for (c = 0; c < n_components; c++)
         average.color[c] /= average.n;
     }
 

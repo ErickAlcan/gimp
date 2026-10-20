@@ -250,6 +250,7 @@ gimp_smudge_start (GimpPaintCore    *paint_core,
   for (i = 0; i < n_strokes; i++)
     {
       GeglBuffer *accum_buffer;
+      const Babl *accum_format;
 
       coords = *(gimp_symmetry_get_coords (sym, i));
       coords.x -= off_x;
@@ -257,11 +258,19 @@ gimp_smudge_start (GimpPaintCore    *paint_core,
 
       gimp_smudge_accumulator_size (paint_options, &coords, &accum_size);
 
-      /*  Allocate the accumulation buffer */
+      /*  Allocate the accumulation buffer: CMYK drawables accumulate in
+       *  "CMYKA float" in the image space (never through RGB)
+       */
+      if (gimp_drawable_is_cmyk (drawable))
+        accum_format = babl_format_with_space ("CMYKA float",
+                                               gimp_drawable_get_format (drawable));
+      else
+        accum_format = babl_format ("RGBA float");
+
       accum_buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0,
                                                       accum_size,
                                                       accum_size),
-                                      babl_format ("RGBA float"));
+                                      accum_format);
       smudge->accum_buffers = g_list_prepend (smudge->accum_buffers,
                                               accum_buffer);
 
@@ -293,7 +302,7 @@ gimp_smudge_start (GimpPaintCore    *paint_core,
           accum_size != gegl_buffer_get_width  (paint_buffer) ||
           accum_size != gegl_buffer_get_height (paint_buffer))
         {
-          gfloat     pixel[4];
+          gfloat     pixel[MAX_CHANNELS];
           GeglColor *color;
           gint       pick_x;
           gint       pick_y;
@@ -307,11 +316,11 @@ gimp_smudge_start (GimpPaintCore    *paint_core,
 
           gimp_pickable_get_pixel_at (dest_pickable,
                                       pick_x, pick_y,
-                                      babl_format ("RGBA float"),
+                                      accum_format,
                                       pixel);
 
           color = gegl_color_new (NULL);
-          gegl_color_set_pixel (color, babl_format ("RGBA float"), pixel);
+          gegl_color_set_pixel (color, accum_format, pixel);
           gegl_buffer_set_color (accum_buffer, NULL, color);
           g_object_unref (color);
         }

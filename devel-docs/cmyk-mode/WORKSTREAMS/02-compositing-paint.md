@@ -74,4 +74,69 @@ op instances must not leak per stroke (cache, never per call); the `opacity` fie
 paint instances is written per stroke (existing behaviour); GEGL ops that hard-code
 `babl_format ("RGBA float")` without space on CMYK data (grep).
 
-**Status**: (agent fills in)
+**Status**: implemented on `ws/02` (branch point `cmyk-01a-merged`). `meson test`: 27 OK,
+3 SKIP (cmyk-image, cmyk-histogram, babl probe: other owners), 1 FAIL (`appdata_file`, network).
+`layer-modes-golden` (G1-G3) green after every commit. Build warning-free in touched files
+(`-Wswitch` at `gimpgrouplayer.c:1152` resolved).
+
+What landed (INTERFACES §8, notes in §8.7)
+* `gimp-layer-modes.c/.h`: `gimp_layer_mode_is_cmyk_native()`, `gimp_layer_mode_get_non_legacy()`
+  (OVERLAY_LEGACY -> SOFTLIGHT, it runs the soft-light-legacy op), CMYK rule in
+  `gimp_layer_mode_get_format()`, `gimp_layer_mode_get_operation_for_format()` (hash + mutex,
+  freed in `gimp_layer_modes_exit()` together with the converters).
+* `GimpOperationLayerMode`: `"cmyk-native"`, §8.3 members, CMYK resolution in `cache_fishes()`
+  (called from `prepare()` and `real_process()`), legacy safety net (`g_warning` once), two-stride
+  `real_process` (CMYK branch only; RGB code path textually unchanged), 33 blend functions on 4
+  components via `gimp_operation_layer_mode_get_blend_format()`/`_get_blend_babl_space()`.
+* Converter `gimpoperationlayermode-cmyk.{c,h}`: two `GimpColorTransform`s per space (CMYKA u16
+  <-> R'G'B'A u16 sRGB, relcol+BPC, no NOOPTIMIZE), 512-pixel stack chunks, alpha copied exactly,
+  babl-fish fallback.
+* `gimp-gegl-nodes`: `set_mode_full()`, `create_flatten_node (bg, format, space)`;
+  `apply_flatten()` passes the dest format; `gimpimage-merge.c` passes the layer format;
+  `gimp_layer_update_mode_node()` passes `cmyk_native` from the stored composite space (TRUE when
+  showing the mask); applicator/drawable filters keep the 4-arg call with their stored space;
+  drawable filter affect uses `GIMP_COMPONENT_MASK_ALL`.
+* Paint: `DoLayerBlend` per-format instance (B2); legacy paint/fill modes mapped in
+  `gimp_paint_core_get_paint_buffer/paste()`, brush/ink paint buffers, `gimp_fill_options_get_format()`,
+  `gimp_drawable_real_apply_buffer()`; MyPaint refuses CMYK ("MyPaint Brush does not support CMYK
+  layers"); smudge accumulates in CMYKA float (separate CMYK loop, RGB loop untouched); heal in
+  CMYKA float; convolve `total[MAX_CHANNELS]`; `gimp_gegl_average_color()` averages CMYK natively
+  (CaMaYaKaA float, buffer space); `gimp_gegl_apply_mask()` keeps CMYK inks.
+* `gimp:mask-components`: CMYK(A) u8/u16/u32/half/float/double, bit map of §1, 5/10/20/40 bpp,
+  CMYK input/aux never processed as RGB; `alpha_value` widened to 64 bit.
+* CMYK-native: set-alpha, threshold-alpha, semi-flatten, compose-crop. Gradient renders RGB
+  (documented); profile-transform/fill-source/offset take caller formats (OK).
+* Groups: projection format `CMYKA <precision>` (image space). `gimp_group_layer_convert_type()`
+  does not color-convert pixels (the projection is re-rendered from the children, which 03
+  converts with the conversion intent), so the intent needs no handling there (comment added).
+  `gimpgrouplayerundo.c`: generic, no change needed.
+* `gimpdrawable-fill.c`: opaque-alpha fill of CMYK colors without `gimp_color_set_alpha()`.
+* `gimp_gegl_convert_color_profile()`: no babl fallback copy to an input-only CMYK profile (01b).
+
+Acceptance (`test-cmyk-compositing.c`)
+* C1, C3, C9 at u16 + float (+ knob): pass; knob runs u8, half, double pass (U32/DOUBLE compare
+  at float, I6 scope). C2 (max 0.02/255 vs clipped babl reference), C6, C7, C10 (<= 0.02/255),
+  C11, C12, C13 (native (0.5,0,0,0.5) vs RGB_LINEAR (0.376,0.029,0.051,0.300)), group layers,
+  edit-clear-with-selection: pass. No warnings/criticals in the log.
+* **Pending integration**: C4, C5, C8 and the C9 "centre == FG" check skip because
+  `gimp_color_set_alpha()` (libgimpcolor/gimpcolor.c, used by GimpContext FG/BG) round-trips
+  through RGB and re-separates CMYK colors. With a local CMYK-safe `gimp_color_set_alpha()`
+  (not committed) all of them pass.
+* P1/P2 (`GIMP_TESTING_PERF=report`, threads 2, without 01b = babl fallback): P1 9.38 s;
+  P2 CMYK 0.543 s vs RGB 0.306 s = 1.78x. P2 is dominated by babl's lack of a fast path for
+  `CMYK u16 (space) -> CMYKA float (space)` (0.39 s / 4 Mpx vs 0.03 s for R'G'B'), which a
+  space-less `babl_conversion_new()` fixes but a space-tagged one does not. P1 with 01b's lcms
+  path is estimated at ~1-1.5 s (REVIEW M2 rates); must be re-measured after the 01b merge.
+* Tier A: base-type switches: only `gimpgrouplayer.c` (fixed). `[4]`/RGBA hits in owned files are
+  explicit RGB formats (gradient, legacy HSV/HSL, MyPaint, semi-flatten RGB branch, smudge RGB
+  branch, heal SSE v4sf, `diff_rects[4]`) or fixed (convolve, smudge, heal, average, apply_mask,
+  set/threshold-alpha, compose-crop, mask-components). #2b: `gimpsmudge.c` pixel now
+  `MAX_CHANNELS` in the accum format; `gimp-gegl-loops.cc` brush color `MAX_CHANNELS` (CMYK
+  path), RGB `[4]` with explicit RGBA float; gradient/semi-flatten/HSV with explicit RGB formats.
+
+Requests for other owners
+* libgimpcolor `gimp_color_set_alpha()`: for CMYK formats set alpha in "CMYKA double" (format's
+  space) instead of the RGB round trip (unblocks C4/C5/C8, exact FG/BG fills and paint).
+* `gimp-babl.c` (01a/01b) or babl upstream: fast CMYK(A) u8/u16 <-> CMYKA float conversions for
+  space-tagged formats (P2).
+

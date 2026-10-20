@@ -29,6 +29,8 @@
 
 #include "../operations-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimp-layer-modes.h"
 #include "gimpoperationlayermode.h"
 #include "gimpoperationlayermode-composite.h"
@@ -55,7 +57,8 @@ enum
   PROP_OPACITY,
   PROP_BLEND_SPACE,
   PROP_COMPOSITE_SPACE,
-  PROP_COMPOSITE_MODE
+  PROP_COMPOSITE_MODE,
+  PROP_CMYK_NATIVE
 };
 
 
@@ -119,6 +122,7 @@ static gboolean        process_last_node                             (GeglOperat
                                                                       const GeglRectangle *roi,
                                                                       gint                 level);
 
+static const Babl    * gimp_operation_layer_mode_get_cmyk_format     (GimpOperationLayerMode  *op);
 static void            gimp_operation_layer_mode_cache_fishes        (GimpOperationLayerMode  *op,
                                                                       const Babl              *preferred_format,
                                                                       const Babl             **out_format,
@@ -206,6 +210,17 @@ gimp_operation_layer_mode_class_init (GimpOperationLayerModeClass *klass)
                                                       GIMP_PARAM_READWRITE |
                                                       G_PARAM_CONSTRUCT));
 
+  /* whether the op composites natively in CMYK when it meets CMYK data
+   * (devel-docs/cmyk-mode/INTERFACES.md §8.3).  FALSE when the layer's or
+   * filter's stored composite space is an explicit RGB space.
+   */
+  g_object_class_install_property (object_class, PROP_CMYK_NATIVE,
+                                   g_param_spec_boolean ("cmyk-native",
+                                                         NULL, NULL,
+                                                         TRUE,
+                                                         GIMP_PARAM_READWRITE |
+                                                         G_PARAM_CONSTRUCT));
+
 
 #if COMPILE_SSE2_INTRINISICS
   if (gimp_cpu_accel_get_support () & GIMP_CPU_ACCEL_X86_SSE2)
@@ -259,6 +274,10 @@ gimp_operation_layer_mode_set_property (GObject      *object,
       self->prop_composite_mode = g_value_get_enum (value);
       break;
 
+    case PROP_CMYK_NATIVE:
+      self->prop_cmyk_native = g_value_get_boolean (value);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
@@ -293,6 +312,10 @@ gimp_operation_layer_mode_get_property (GObject    *object,
 
     case PROP_COMPOSITE_MODE:
       g_value_set_enum (value, self->prop_composite_mode);
+      break;
+
+    case PROP_CMYK_NATIVE:
+      g_value_set_boolean (value, self->prop_cmyk_native);
       break;
 
     default:
@@ -360,6 +383,27 @@ gimp_operation_layer_mode_prepare (GeglOperation *operation)
     }
 
   self->has_mask = mask_extent && ! gegl_rectangle_is_empty (mask_extent);
+
+  /* legacy safety net: legacy modes are not available in CMYK images (I9),
+   * if one still meets CMYK data it composites in its RGB space (lossy).
+   */
+  if (gimp_layer_mode_is_legacy (self->layer_mode) &&
+      ! self->legacy_cmyk_warned                   &&
+      (gimp_babl_format_is_cmyk (gegl_operation_get_source_format (operation, "input")) ||
+       gimp_babl_format_is_cmyk (gegl_operation_get_source_format (operation, "aux"))))
+    {
+      static gboolean warned = FALSE;
+
+      self->legacy_cmyk_warned = TRUE;
+
+      if (! warned)
+        {
+          warned = TRUE;
+
+          g_warning ("%s: legacy layer mode %d used on CMYK data, "
+                     "compositing in RGB", G_STRFUNC, self->layer_mode);
+        }
+    }
 
   gimp_operation_layer_mode_cache_fishes (self, preferred_format, &format, NULL, NULL);
 
@@ -637,6 +681,7 @@ gimp_operation_layer_mode_real_process (GeglOperation       *operation,
   gfloat                 *blend_out;
   const Babl             *composite_to_blend_fish = NULL;
   const Babl             *blend_to_composite_fish = NULL;
+  gfloat                 *cmyk_scratch            = NULL;
 
   /* make sure we don't process more than GIMP_COMPOSITE_BLEND_MAX_SAMPLES
    * at a time, so that we don't overflow the stack if we allocate buffers
@@ -674,10 +719,98 @@ gimp_operation_layer_mode_real_process (GeglOperation       *operation,
                                           &composite_to_blend_fish,
                                           &blend_to_composite_fish);
 
+  /* CMYK: the composite side has n_components (5) per sample, the blend
+   * side always 4 (INTERFACES §8.4).  convert the blended samples to the
+   * blend format with the CMYK converter, blend, and convert the result
+   * back into 'blend_out' (stride n_components).
+   */
+  if (layer_mode->cmyk)
+    {
+      const GimpLayerModeCmykConverter *converter    = layer_mode->cmyk_converter;
+      const Babl                       *blend_format = layer_mode->blend_format;
+      gfloat                           *blend_out4;
+      gint                              i;
+
+      cmyk_scratch = gegl_scratch_new (gfloat,
+                                       (3 * 4 + n_components) * samples);
+
+      blend_in    = cmyk_scratch;
+      blend_layer = blend_in    + 4 * samples;
+      blend_out4  = blend_layer + 4 * samples;
+      blend_out   = blend_out4  + 4 * samples;
+
+      i = 0;
+
+      while (TRUE)
+        {
+          gint first;
+          gint last;
+          gint count;
+
+          /* skip any unblended samples (see below) */
+          while (i < samples &&
+                 (in[i * n_components + alpha]    == 0.0f ||
+                  layer[i * n_components + alpha] == 0.0f))
+            {
+              blend_out[i * n_components + alpha] = 0.0f;
+              i++;
+            }
+
+          if (i == samples)
+            break;
+
+          first  = i;
+          i     += 1;
+          last   = i;
+
+          while (i < samples &&
+                 i - last < GIMP_COMPOSITE_BLEND_SPLIT_THRESHOLD)
+            {
+              gboolean blended;
+
+              blended = (in[i * n_components + alpha]    != 0.0f &&
+                         layer[i * n_components + alpha] != 0.0f);
+
+              i += 1;
+              if (blended)
+                last = i;
+            }
+
+          /* convert and blend the samples in the range [first, last) */
+
+          count = last - first;
+
+          gimp_layer_mode_cmyk_converter_to_blend (converter, blend_format,
+                                                   in + first * n_components,
+                                                   blend_in + first * 4,
+                                                   count);
+          gimp_layer_mode_cmyk_converter_to_blend (converter, blend_format,
+                                                   layer + first * n_components,
+                                                   blend_layer + first * 4,
+                                                   count);
+
+          blend_function (operation,
+                          blend_in    + first * 4,
+                          blend_layer + first * 4,
+                          blend_out4  + first * 4,
+                          count);
+
+          gimp_layer_mode_cmyk_converter_from_blend (converter, blend_format,
+                                                     blend_out4 + first * 4,
+                                                     blend_out + first * n_components,
+                                                     count);
+
+          /* make sure the alpha values of `blend_out` are valid for the
+           * trailing unblended samples.
+           */
+          for (; last < i; last++)
+            blend_out[last * n_components + alpha] = 0.0f;
+        }
+    }
   /* if we need to convert the samples between the composite and blend
    * spaces...
    */
-  if (composite_to_blend_fish)
+  else if (composite_to_blend_fish)
     {
       gint i;
       gint end;
@@ -844,6 +977,9 @@ gimp_operation_layer_mode_real_process (GeglOperation       *operation,
         }
     }
 
+  if (cmyk_scratch)
+    gegl_scratch_free (cmyk_scratch);
+
   return TRUE;
 }
 
@@ -880,6 +1016,63 @@ process_last_node (GeglOperation       *operation,
   return TRUE;
 }
 
+static const Babl *
+gimp_operation_layer_mode_get_cmyk_format (GimpOperationLayerMode *op)
+{
+  GeglOperation *operation = GEGL_OPERATION (op);
+  const Babl    *format;
+
+  /* see INTERFACES §8.3: the op composites in CMYK iff its cmyk-native
+   * property is set, its mode is not legacy, and one of its sources (or its
+   * fixed format, for the paint core's instances) is CMYK.
+   */
+  if (! op->prop_cmyk_native ||
+      ! gimp_layer_mode_is_cmyk_native (op->layer_mode))
+    return NULL;
+
+  if (operation->node)
+    {
+      format = gegl_operation_get_source_format (operation, "input");
+      if (gimp_babl_format_is_cmyk (format))
+        return format;
+
+      format = gegl_operation_get_source_format (operation, "aux");
+      if (gimp_babl_format_is_cmyk (format))
+        return format;
+    }
+
+  if (gimp_babl_format_is_cmyk (op->fixed_format))
+    return op->fixed_format;
+
+  return NULL;
+}
+
+static const Babl *
+get_cmyk_blend_format (GimpOperationLayerMode *op)
+{
+  GimpLayerColorSpace blend_space = op->blend_space;
+
+  if (blend_space == GIMP_LAYER_COLOR_SPACE_AUTO)
+    blend_space = gimp_layer_mode_get_blend_space (op->layer_mode);
+
+  /* blend formats are sRGB based (NULL space, I5) */
+  switch (blend_space)
+    {
+    case GIMP_LAYER_COLOR_SPACE_RGB_LINEAR:
+      return babl_format ("RGBA float");
+
+    case GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL:
+      return babl_format ("R~G~B~A float");
+
+    case GIMP_LAYER_COLOR_SPACE_LAB:
+      return babl_format ("CIE Lab alpha float");
+
+    case GIMP_LAYER_COLOR_SPACE_RGB_NON_LINEAR:
+    default:
+      return babl_format ("R'G'B'A float");
+    }
+}
+
 static void
 gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
                                         const Babl              *preferred_format,
@@ -888,6 +1081,7 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
                                         const Babl             **blend_to_composite_fish)
 {
   const Babl *format;
+  const Babl *cmyk_format;
   gboolean    update_cache = FALSE;
 
   g_rw_lock_reader_lock (&op->cache_lock);
@@ -903,25 +1097,44 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
   if (op->blend_space != GIMP_LAYER_COLOR_SPACE_AUTO)
     gimp_assert (op->composite_space != GIMP_LAYER_COLOR_SPACE_AUTO);
 
-  if (! preferred_format)
+  cmyk_format = gimp_operation_layer_mode_get_cmyk_format (op);
+
+  if (cmyk_format)
     {
-      const GeglRectangle *input_extent;
+      /* composite in "CMYKA float" in the CMYK space (INTERFACES §8.3) */
+      format = gimp_layer_mode_get_format (op->layer_mode,
+                                           op->blend_space,
+                                           GIMP_LAYER_COLOR_SPACE_AUTO,
+                                           op->composite_mode,
+                                           cmyk_format);
+    }
+  else
+    {
+      if (! preferred_format)
+        {
+          const GeglRectangle *input_extent;
 
-      input_extent = gegl_operation_source_get_bounding_box (GEGL_OPERATION (op), "input");
+          input_extent = gegl_operation_source_get_bounding_box (GEGL_OPERATION (op), "input");
 
-      if (input_extent && ! gegl_rectangle_is_empty (input_extent))
-        preferred_format = gegl_operation_get_source_format (GEGL_OPERATION (op), "input");
-      else
-        preferred_format = gegl_operation_get_source_format (GEGL_OPERATION (op), "aux");
+          if (input_extent && ! gegl_rectangle_is_empty (input_extent))
+            preferred_format = gegl_operation_get_source_format (GEGL_OPERATION (op), "input");
+          else
+            preferred_format = gegl_operation_get_source_format (GEGL_OPERATION (op), "aux");
+        }
+
+      /* ops without a graph (the paint core's) use their fixed format */
+      if (! preferred_format)
+        preferred_format = op->fixed_format;
+
+      format = gimp_layer_mode_get_format (op->layer_mode,
+                                           op->blend_space,
+                                           op->composite_space,
+                                           op->composite_mode,
+                                           preferred_format);
     }
 
-  format = gimp_layer_mode_get_format (op->layer_mode,
-                                       op->blend_space,
-                                       op->composite_space,
-                                       op->composite_mode,
-                                       preferred_format);
-
-  if (op->cached_fish_format != format)
+  if (op->cached_fish_format != format ||
+      op->cached_cmyk        != (cmyk_format != NULL))
     {
       g_rw_lock_reader_unlock (&op->cache_lock);
       update_cache = TRUE;
@@ -931,14 +1144,31 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
     {
       g_rw_lock_writer_lock (&op->cache_lock);
 
+      if (cmyk_format &&
+          (op->cached_fish_format != format || ! op->cached_cmyk))
+        {
+          /* no babl space fishes: the converter does CMYK <-> blend */
+          op->cached_fish_format = format;
+          op->cached_cmyk        = TRUE;
+
+          op->blend_format   = get_cmyk_blend_format (op);
+          op->cmyk_converter =
+            gimp_layer_mode_cmyk_converter_get (babl_format_get_space (format));
+          op->cmyk           = TRUE;
+        }
       /* We recheck because it is possible that in-between the point we
        * released the read lock and got our write lock, another thread
        * also modified the cache (to the same values).
        * No need to redo the same thing twice.
        */
-      if (op->cached_fish_format != format)
+      else if (! cmyk_format &&
+               (op->cached_fish_format != format || op->cached_cmyk))
         {
           op->cached_fish_format = format;
+          op->cached_cmyk        = FALSE;
+          op->cmyk               = FALSE;
+          op->blend_format       = NULL;
+          op->cmyk_converter     = NULL;
 
           op->space_fish
             /* from */ [GIMP_LAYER_COLOR_SPACE_RGB_LINEAR     - 1]
@@ -1018,7 +1248,8 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
     *layer_mode_format = format;
   if (composite_to_blend_fish)
     {
-      if (op->blend_space != GIMP_LAYER_COLOR_SPACE_AUTO &&
+      if (! cmyk_format                                  &&
+          op->blend_space != GIMP_LAYER_COLOR_SPACE_AUTO &&
           op->composite_space != GIMP_LAYER_COLOR_SPACE_AUTO)
         *composite_to_blend_fish = op->space_fish[op->composite_space - 1][op->blend_space - 1];
       else
@@ -1026,7 +1257,8 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
     }
   if (blend_to_composite_fish)
     {
-      if (op->blend_space != GIMP_LAYER_COLOR_SPACE_AUTO &&
+      if (! cmyk_format                                  &&
+          op->blend_space != GIMP_LAYER_COLOR_SPACE_AUTO &&
           op->composite_space != GIMP_LAYER_COLOR_SPACE_AUTO)
         *blend_to_composite_fish = op->space_fish[op->blend_space - 1][op->composite_space - 1];
       else
@@ -1057,4 +1289,68 @@ gimp_operation_layer_mode_get_affected_region (GimpOperationLayerMode *layer_mod
     return klass->get_affected_region (layer_mode);
 
   return GIMP_LAYER_COMPOSITE_REGION_INTERSECTION;
+}
+
+/**
+ * gimp_operation_layer_mode_get_blend_format:
+ * @layer_mode: a #GimpOperationLayerMode
+ *
+ * Returns: the format of the pixels the blend function receives: the
+ *          op's (sRGB based) blend format when it composites in CMYK,
+ *          otherwise the format of its "input" pad.
+ **/
+const Babl *
+gimp_operation_layer_mode_get_blend_format (GimpOperationLayerMode *layer_mode)
+{
+  if (layer_mode->cmyk)
+    return layer_mode->blend_format;
+
+  return gegl_operation_get_format (GEGL_OPERATION (layer_mode), "input");
+}
+
+/**
+ * gimp_operation_layer_mode_get_blend_babl_space:
+ * @layer_mode: a #GimpOperationLayerMode
+ *
+ * Returns: the babl space the blend function's RGB values are in: %NULL
+ *          (sRGB) when the op composites in CMYK, otherwise the space of
+ *          its "input" source.
+ **/
+const Babl *
+gimp_operation_layer_mode_get_blend_babl_space (GimpOperationLayerMode *layer_mode)
+{
+  if (layer_mode->cmyk)
+    return NULL;
+
+  return gegl_operation_get_source_space (GEGL_OPERATION (layer_mode), "input");
+}
+
+/**
+ * gimp_operation_layer_mode_set_fixed_format:
+ * @layer_mode: a #GimpOperationLayerMode without a graph
+ * @format:     the format the op processes
+ *
+ * Sets the pad formats of an op that is used without a graph (the paint
+ * core's per-format instances, gimp_layer_mode_get_operation_for_format())
+ * and primes its fish cache.
+ **/
+void
+gimp_operation_layer_mode_set_fixed_format (GimpOperationLayerMode *layer_mode,
+                                            const Babl             *format)
+{
+  GeglOperation *operation = GEGL_OPERATION (layer_mode);
+
+  g_return_if_fail (GIMP_IS_OPERATION_LAYER_MODE (layer_mode));
+  g_return_if_fail (format != NULL);
+
+  layer_mode->fixed_format     = format;
+  layer_mode->prop_cmyk_native = TRUE;
+
+  gegl_operation_set_format (operation, "input",  format);
+  gegl_operation_set_format (operation, "aux",    format);
+  gegl_operation_set_format (operation, "output", format);
+  gegl_operation_set_format (operation, "aux2",
+                             babl_format_with_space ("Y float", format));
+
+  gimp_operation_layer_mode_cache_fishes (layer_mode, NULL, NULL, NULL, NULL);
 }

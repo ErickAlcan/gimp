@@ -1902,14 +1902,30 @@ struct DoLayerBlend : Base
   DoLayerBlend (const GimpPaintCoreLoopsParams *params) :
     Base (params)
   {
-    layer_mode = GIMP_OPERATION_LAYER_MODE (gimp_layer_mode_get_operation (params->paint_mode));
+    const Babl *paint_format = gimp_temp_buf_get_format (params->paint_buf);
+
+    /* B2: for CMYK paint buffers, this is a shared instance per
+     * (mode, format) whose pads have the paint buffer's format, so that
+     * it composites with 5 components (INTERFACES §8.2).  For other
+     * formats, it is gimp_layer_mode_get_operation()'s instance.
+     */
+    layer_mode = GIMP_OPERATION_LAYER_MODE (
+      gimp_layer_mode_get_operation_for_format (params->paint_mode,
+                                                paint_format));
     layer_mode->opacity = params->image_opacity;
 
-    iterator_format = gimp_layer_mode_get_format (params->paint_mode,
-                                                  layer_mode->blend_space,
-                                                  layer_mode->composite_space,
-                                                  layer_mode->composite_mode,
-                                                  gimp_temp_buf_get_format (params->paint_buf));
+    if (gimp_babl_format_is_cmyk (paint_format))
+      {
+        iterator_format = paint_format;
+      }
+    else
+      {
+        iterator_format = gimp_layer_mode_get_format (params->paint_mode,
+                                                      layer_mode->blend_space,
+                                                      layer_mode->composite_space,
+                                                      layer_mode->composite_mode,
+                                                      paint_format);
+      }
 
     g_return_if_fail (gimp_temp_buf_get_format (params->paint_buf) == iterator_format);
   }

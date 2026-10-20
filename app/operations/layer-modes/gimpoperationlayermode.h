@@ -22,6 +22,8 @@
 
 #include <gegl-plugin.h>
 
+#include "gimpoperationlayermode-cmyk.h"
+
 
 #define GIMP_TYPE_OPERATION_LAYER_MODE            (gimp_operation_layer_mode_get_type ())
 #define GIMP_OPERATION_LAYER_MODE(obj)            (G_TYPE_CHECK_INSTANCE_CAST ((obj), GIMP_TYPE_OPERATION_LAYER_MODE, GimpOperationLayerMode))
@@ -53,6 +55,15 @@ struct _GimpOperationLayerMode
   GimpLayerModeBlendFunc       blend_function;
   gboolean                     is_last_node;
   gboolean                     has_mask;
+
+  /*  CMYK compositing (devel-docs/cmyk-mode/INTERFACES.md §8.3)  */
+  gboolean                     prop_cmyk_native;
+  const Babl                  *fixed_format;
+  gboolean                     cmyk;
+  const Babl                  *blend_format;
+  const GimpLayerModeCmykConverter *cmyk_converter;
+  gboolean                     cached_cmyk;
+  gboolean                     legacy_cmyk_warned;
 };
 
 struct _GimpOperationLayerModeClass
@@ -85,3 +96,10 @@ struct _GimpOperationLayerModeClass
 GType                    gimp_operation_layer_mode_get_type            (void);
 
 GimpLayerCompositeRegion gimp_operation_layer_mode_get_affected_region (GimpOperationLayerMode *layer_mode);
+
+const Babl             * gimp_operation_layer_mode_get_blend_format    (GimpOperationLayerMode *layer_mode);
+const Babl             * gimp_operation_layer_mode_get_blend_babl_space (GimpOperationLayerMode *layer_mode);
+
+/*  for gimp_layer_mode_get_operation_for_format() only  */
+void                     gimp_operation_layer_mode_set_fixed_format    (GimpOperationLayerMode *layer_mode,
+                                                                        const Babl             *format);

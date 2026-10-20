@@ -858,6 +858,7 @@ gimp_image_merge_layers (GimpImage     *image,
       /*  get the background for compositing  */
       flatten_node = gimp_gegl_create_flatten_node
         (gimp_context_get_background (context),
+         gimp_image_get_layer_format (image, FALSE),
          gimp_layer_get_real_composite_space (bottom_layer));
     }
   else

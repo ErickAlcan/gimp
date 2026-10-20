@@ -135,8 +135,27 @@ gimp_drawable_fill_buffer (GimpDrawable  *drawable,
     {
       if (! gimp_drawable_has_alpha (drawable))
         {
+          const Babl *format = gegl_color_get_format (color);
+
           color = gegl_color_duplicate (color);
-          gimp_color_set_alpha (color, 1.0);
+
+          if (gimp_babl_format_is_cmyk (format))
+            {
+              /* gimp_color_set_alpha() round-trips through RGB, which
+               * re-separates CMYK inks: set alpha in CMYKA directly
+               */
+              gdouble cmyka[5];
+
+              format = babl_format_with_space ("CMYKA double", format);
+
+              gegl_color_get_pixel (color, format, cmyka);
+              cmyka[4] = 1.0;
+              gegl_color_set_pixel (color, format, cmyka);
+            }
+          else
+            {
+              gimp_color_set_alpha (color, 1.0);
+            }
         }
 
       gegl_buffer_set_color (buffer, NULL, color);

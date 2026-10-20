@@ -27,6 +27,8 @@ extern "C"
 
 #include "operations-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpoperationmaskcomponents.h"
 
 } /* extern "C" */
@@ -169,7 +171,7 @@ gimp_operation_mask_components_set_property (GObject      *object,
     }
 }
 
-static guint32
+static guint64
 get_alpha_value (const Babl *format,
                  gfloat      alpha)
 {
@@ -191,6 +193,12 @@ get_alpha_value (const Babl *format,
     DEF_CASE ( 4, guint8)
     DEF_CASE ( 8, guint16)
     DEF_CASE (16, guint32)
+
+    /* CMYKA (5 components) */
+    DEF_CASE ( 5, guint8)
+    DEF_CASE (10, guint16)
+    DEF_CASE (20, guint32)
+    DEF_CASE (40, guint64)
 
     #undef DEF_CASE
 
@@ -259,6 +267,84 @@ struct ProcessGeneric
 
             in  += 4;
             out += 4;
+          }
+      }
+  }
+};
+
+/* CMYKA: component c in 0..4 (C, M, Y, K, alpha) is selected by bit
+ * cmyka_bits[c] of the mask (devel-docs/cmyk-mode/INTERFACES.md §1:
+ * bit0 C, bit1 M, bit2 Y, bit3 alpha, bit4 K).
+ */
+static const guint cmyka_bits[5] =
+{
+  GIMP_COMPONENT_MASK_CYAN,
+  GIMP_COMPONENT_MASK_MAGENTA,
+  GIMP_COMPONENT_MASK_YELLOW,
+  GIMP_COMPONENT_MASK_BLACK,
+  GIMP_COMPONENT_MASK_ALPHA
+};
+
+template <class T>
+struct ProcessCmyk
+{
+  static void
+  process (gconstpointer     in_buf,
+           gconstpointer     aux_buf,
+           gpointer          out_buf,
+           gint              n,
+           GimpComponentMask mask,
+           T                 alpha_value)
+  {
+    T    *out = (T *) out_buf;
+    gint  i;
+    gint  c;
+
+    if (aux_buf)
+      {
+        const T *in[5];
+
+        for (c = 0; c < 5; c++)
+          {
+            if (mask & cmyka_bits[c])
+              in[c] = (const T *) aux_buf + c;
+            else
+              in[c] = (const T *) in_buf  + c;
+          }
+
+        for (i = 0; i < n; i++)
+          {
+            for (c = 0; c < 5; c++)
+              {
+                out[c] = *in[c];
+
+                in[c] += 5;
+              }
+
+            out += 5;
+          }
+      }
+    else
+      {
+        const T *in = (const T*) in_buf;
+
+        for (i = 0; i < n; i++)
+          {
+            for (c = 0; c < 4; c++)
+              {
+                if (mask & cmyka_bits[c])
+                  out[c] = 0;
+                else
+                  out[c] = in[c];
+              }
+
+            if (mask & GIMP_COMPONENT_MASK_ALPHA)
+              out[4] = alpha_value;
+            else
+              out[4] = in[4];
+
+            in  += 5;
+            out += 5;
           }
       }
   }
@@ -360,9 +446,54 @@ gimp_operation_mask_components_process (GimpOperationMaskComponents *self,
                                         gint                         level)
 {
   Process<T>::process (in_buf, aux_buf, out_buf, samples,
-                       self->mask, self->alpha_value);
+                       self->mask, (T) self->alpha_value);
 
   return TRUE;
+}
+
+template <class T>
+static gboolean
+gimp_operation_mask_components_process_cmyk (GimpOperationMaskComponents *self,
+                                             void                        *in_buf,
+                                             void                        *aux_buf,
+                                             void                        *out_buf,
+                                             glong                        samples,
+                                             const GeglRectangle         *roi,
+                                             gint                         level)
+{
+  ProcessCmyk<T>::process (in_buf, aux_buf, out_buf, samples,
+                           self->mask, (T) self->alpha_value);
+
+  return TRUE;
+}
+
+static const Babl *
+get_cmyka_format (const Babl *type_format,
+                  const Babl *space_format)
+{
+  const gchar *type_name;
+
+  type_name = babl_get_name (babl_format_get_type (type_format, 0));
+
+  if (! strcmp (type_name, "u8"))
+    return babl_format_with_space ("CMYKA u8", space_format);
+  else if (! strcmp (type_name, "u16"))
+    return babl_format_with_space ("CMYKA u16", space_format);
+  else if (! strcmp (type_name, "u32"))
+    return babl_format_with_space ("CMYKA u32", space_format);
+  else if (! strcmp (type_name, "half"))
+    return babl_format_with_space ("CMYKA half", space_format);
+  else if (! strcmp (type_name, "double"))
+    return babl_format_with_space ("CMYKA double", space_format);
+
+  return babl_format_with_space ("CMYKA float", space_format);
+}
+
+static gint
+get_component_size (const Babl *format)
+{
+  return babl_format_get_bytes_per_pixel (format) /
+         babl_format_get_n_components (format);
 }
 
 static void
@@ -375,8 +506,23 @@ gimp_operation_mask_components_prepare (GeglOperation *operation)
   format = gimp_operation_mask_components_get_format (gegl_operation_get_source_format (operation, "input"));
   aux_format = gimp_operation_mask_components_get_format (gegl_operation_get_source_format (operation, "aux"));
 
-  if (babl_format_get_bytes_per_pixel (aux_format) / babl_format_get_n_components (aux_format) >
-      babl_format_get_bytes_per_pixel (format) / babl_format_get_n_components (format))
+  if (gimp_babl_format_is_cmyk (format) ||
+      gimp_babl_format_is_cmyk (aux_format))
+    {
+      /* CMYK: always process CMYKA (never convert the inks to RGB), with
+       * the higher bit-depth component type of the two.
+       */
+      const Babl *cmyk_format = gimp_babl_format_is_cmyk (format) ?
+                                format : aux_format;
+      const Babl *type_format = format;
+
+      if (get_component_size (aux_format) > get_component_size (format))
+        type_format = aux_format;
+
+      format = get_cmyka_format (type_format, cmyk_format);
+    }
+  else if (babl_format_get_bytes_per_pixel (aux_format) / babl_format_get_n_components (aux_format) >
+           babl_format_get_bytes_per_pixel (format) / babl_format_get_n_components (format))
     /* Use the higher bit-depth format as possible for processing and
      * output.
      */
@@ -407,6 +553,26 @@ gimp_operation_mask_components_prepare (GeglOperation *operation)
         case 16:
           self->process = (gpointer)
                             gimp_operation_mask_components_process<guint32>;
+          break;
+
+        case 5:
+          self->process = (gpointer)
+                            gimp_operation_mask_components_process_cmyk<guint8>;
+          break;
+
+        case 10:
+          self->process = (gpointer)
+                            gimp_operation_mask_components_process_cmyk<guint16>;
+          break;
+
+        case 20:
+          self->process = (gpointer)
+                            gimp_operation_mask_components_process_cmyk<guint32>;
+          break;
+
+        case 40:
+          self->process = (gpointer)
+                            gimp_operation_mask_components_process_cmyk<guint64>;
           break;
 
         default:
@@ -513,6 +679,12 @@ gimp_operation_mask_components_get_format (const Babl *input_format)
 {
   const Babl *format = NULL;
 
+  if (gimp_babl_format_is_cmyk (input_format))
+    {
+      /* CMYK(A), cmyk(A), CaMaYaKaA, ...: process as CMYKA */
+      return get_cmyka_format (input_format, input_format);
+    }
+
   if (input_format)
     {
       const Babl  *model      = babl_format_get_model (input_format);
@@ -589,6 +761,22 @@ gimp_operation_mask_components_process (const Babl        *format,
 
     case 16:
       Process<guint32>::process (in, aux, out, n, mask, 0);
+      break;
+
+    case 5:
+      ProcessCmyk<guint8>::process (in, aux, out, n, mask, 0);
+      break;
+
+    case 10:
+      ProcessCmyk<guint16>::process (in, aux, out, n, mask, 0);
+      break;
+
+    case 20:
+      ProcessCmyk<guint32>::process (in, aux, out, n, mask, 0);
+      break;
+
+    case 40:
+      ProcessCmyk<guint64>::process (in, aux, out, n, mask, 0);
       break;
 
     default:

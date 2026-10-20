@@ -22,6 +22,7 @@
 
 
 GeglNode * gimp_gegl_create_flatten_node       (GeglColor             *background,
+                                                const Babl            *format,
                                                 GimpLayerColorSpace    composite_space);
 GeglNode * gimp_gegl_create_apply_opacity_node (GeglBuffer            *mask,
                                                 gint                   mask_offset_x,
@@ -39,6 +40,12 @@ void       gimp_gegl_mode_node_set_mode        (GeglNode               *node,
                                                 GimpLayerColorSpace     blend_space,
                                                 GimpLayerColorSpace     composite_space,
                                                 GimpLayerCompositeMode  composite_mode);
+void       gimp_gegl_mode_node_set_mode_full   (GeglNode               *node,
+                                                GimpLayerMode           mode,
+                                                GimpLayerColorSpace     blend_space,
+                                                GimpLayerColorSpace     composite_space,
+                                                GimpLayerCompositeMode  composite_mode,
+                                                gboolean                cmyk_native);
 void       gimp_gegl_mode_node_set_opacity     (GeglNode               *node,
                                                 gdouble                 opacity);
 

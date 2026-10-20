@@ -25,6 +25,8 @@
 
 #include "operations-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpoperationcomposecrop.h"
 
 
@@ -200,6 +202,14 @@ gimp_operation_compose_crop_prepare (GeglOperation *operation)
       if (input_format == aux_format)
         {
           format = input_format;
+        }
+      else if (gimp_babl_format_is_cmyk (input_format) ||
+               gimp_babl_format_is_cmyk (aux_format))
+        {
+          /* CMYK: never compose through RGB */
+          format = babl_format_with_space ("CMYKA float",
+                                           gimp_babl_format_is_cmyk (input_format) ?
+                                           input_format : aux_format);
         }
       else
         {

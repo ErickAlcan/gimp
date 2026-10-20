@@ -2101,10 +2101,8 @@ gimp_drawable_filter_sync_affect (GimpDrawableFilter *filter)
     filter->applicator,
     filter->override_constraints ?
 
-      GIMP_COMPONENT_MASK_RED   |
-      GIMP_COMPONENT_MASK_GREEN |
-      GIMP_COMPONENT_MASK_BLUE  |
-      GIMP_COMPONENT_MASK_ALPHA :
+      /* all components, including K in CMYK images (INTERFACES §1) */
+      GIMP_COMPONENT_MASK_ALL :
 
       gimp_drawable_get_active_mask (filter->drawable));
 }
