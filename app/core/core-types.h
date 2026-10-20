@@ -43,6 +43,17 @@
 #define INDEXED       0
 #define ALPHA_I       1
 
+#define CYAN          0
+#define MAGENTA       1
+#define YELLOW        2
+#define BLACK         3
+#define ALPHA_C       4
+
+/*  Any stack buffer that receives a pixel in a drawable's / pickable's
+ *  native format must be MAX_CHANNELS doubles (40 bytes, CMYKA double),
+ *  never [4]: gdouble pixel[MAX_CHANNELS].
+ */
+
 
 /*  defines  */
 
