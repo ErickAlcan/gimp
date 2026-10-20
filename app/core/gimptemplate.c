@@ -457,6 +457,10 @@ gimp_template_fix_cmyk_precision (GimpTemplate *template)
 {
   GimpTemplatePrivate *private = GET_PRIVATE (template);
 
+  /*  during construction, the precision may not be set yet  */
+  if (private->precision < GIMP_PRECISION_U8_LINEAR)
+    return;
+
   if (private->base_type == GIMP_CMYK &&
       gimp_babl_trc (private->precision) != GIMP_TRC_NON_LINEAR)
     {
