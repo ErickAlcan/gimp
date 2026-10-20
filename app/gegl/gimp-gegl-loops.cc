@@ -1169,6 +1169,19 @@ gimp_gegl_convert_color_profile (GeglBuffer               *src_buffer,
 
       g_object_unref (transform);
     }
+  else if (gimp_color_profile_is_cmyk (dest_profile) &&
+           ! gimp_color_profile_is_cmyk_bidirectional (dest_profile))
+    {
+      /* no transform to an input-only CMYK profile: don't fall back to a
+       * babl conversion either, babl crashes on RGB -> CMYK with such a
+       * profile (INTERFACES §3.2)
+       */
+      g_printerr ("%s: cannot convert to an input-only CMYK profile\n",
+                  G_STRFUNC);
+
+      if (progress)
+        gimp_progress_set_value (progress, 1.0);
+    }
   else
     {
       gimp_gegl_buffer_copy (src_buffer,  src_rect, GEGL_ABYSS_NONE,
