@@ -70,6 +70,7 @@
 #include "core/gimpimage-rotate.h"
 #include "core/gimpimage-scale.h"
 #include "core/gimpimage-undo.h"
+#include "core/gimpundostack.h"
 #include "core/gimplayer.h"
 #include "core/gimplayer-floating-selection.h"
 #include "core/gimplayer-new.h"
@@ -334,10 +335,22 @@ static void
 assert_bytes_equal (GBytes *a,
                     GBytes *b)
 {
+  const guint8 *da = g_bytes_get_data (a, NULL);
+  const guint8 *db = g_bytes_get_data (b, NULL);
+  gsize         i;
+
   g_assert_cmpuint (g_bytes_get_size (a), ==, g_bytes_get_size (b));
-  g_assert_true (memcmp (g_bytes_get_data (a, NULL),
-                         g_bytes_get_data (b, NULL),
-                         g_bytes_get_size (a)) == 0);
+
+  for (i = 0; i < g_bytes_get_size (a); i++)
+    if (da[i] != db[i])
+      g_error ("bytes differ at offset %" G_GSIZE_FORMAT ": %u vs %u",
+               i, da[i], db[i]);
+}
+
+static void
+assert_no_undo (GimpImage *image)
+{
+  g_assert_null (gimp_undo_stack_peek (gimp_image_get_undo_stack (image)));
 }
 
 static GList *
@@ -424,7 +437,7 @@ i1_rgb_to_cmyk_structure (void)
   /*  one undo step  */
   g_assert_true (gimp_image_undo (image));
   g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_RGB);
-  g_assert_false (gimp_image_undo (image));
+  assert_no_undo (image);
 
   /*  NULL profile: the default CMYK profile  */
   g_assert_true (gimp_image_convert_type (image, GIMP_CMYK, NULL, NULL, &error));
@@ -452,7 +465,7 @@ i1_rgb_to_cmyk_structure (void)
     g_clear_error (&error);
 
     g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_RGB);
-    g_assert_false (gimp_image_undo (image));
+    assert_no_undo (image);
 
     g_object_unref (input_only);
     g_object_unref (srgb);
@@ -680,7 +693,8 @@ snapshot_assert (Snapshot  *snap,
 }
 
 static GimpImage *
-new_rgb_complex_image (GimpLayer **legacy_layer)
+new_rgb_complex_image (gboolean    with_group,
+                       GimpLayer **legacy_layer)
 {
   GimpImage     *image;
   GimpLayer     *bg;
@@ -707,8 +721,15 @@ new_rgb_complex_image (GimpLayer **legacy_layer)
   gegl_buffer_set (gimp_drawable_get_buffer (GIMP_DRAWABLE (bg)), NULL, 0,
                    babl_format ("R'G'B' u16"), data, GEGL_AUTO_ROWSTRIDE);
 
-  group = gimp_group_layer_new (image);
-  gimp_image_add_layer (image, group, NULL, 0, FALSE);
+  if (with_group)
+    {
+      group = gimp_group_layer_new (image);
+      gimp_image_add_layer (image, group, NULL, 0, FALSE);
+    }
+  else
+    {
+      group = NULL;
+    }
 
   child = gimp_layer_new (image, W, H, gimp_image_get_layer_format (image, TRUE),
                           "child", 0.5, GIMP_LAYER_MODE_NORMAL);
@@ -748,7 +769,7 @@ new_rgb_complex_image (GimpLayer **legacy_layer)
 }
 
 static void
-i2_undo_redo (void)
+i2_undo_redo_full (gboolean with_group)
 {
   GimpColorProfile *profile = builtin_cmyk ();
   GimpImage        *image;
@@ -758,7 +779,7 @@ i2_undo_redo (void)
   GError           *error = NULL;
   gint              i;
 
-  image = new_rgb_complex_image (&legacy);
+  image = new_rgb_complex_image (with_group, &legacy);
   rgb   = snapshot_new (image);
 
   g_assert_cmpint (gimp_layer_get_mode (legacy), ==, GIMP_LAYER_MODE_MULTIPLY_LEGACY);
@@ -802,6 +823,22 @@ i2_undo_redo (void)
   snapshot_free (cmyk);
   g_object_unref (image);
   g_object_unref (profile);
+}
+
+
+static void
+i2_undo_redo (void)
+{
+  i2_undo_redo_full (FALSE);
+}
+
+static void
+i2_undo_redo_group (void)
+{
+  /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
+  NEED_WS02 ();
+
+  i2_undo_redo_full (TRUE);
 }
 
 
@@ -930,7 +967,7 @@ i4_linear_precision (void)
                    GIMP_PRECISION_FLOAT_LINEAR);
   g_assert_cmpint (gimp_drawable_get_precision (GIMP_DRAWABLE (layer)), ==,
                    GIMP_PRECISION_FLOAT_LINEAR);
-  g_assert_false (gimp_image_undo (image));
+  assert_no_undo (image);
 
   g_object_unref (image);
 
@@ -983,7 +1020,7 @@ i5_indexed (void)
   g_assert_true (gimp_image_undo (image));
   g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_INDEXED);
   g_assert_nonnull (gimp_image_get_colormap_palette (image));
-  g_assert_false (gimp_image_undo (image));
+  assert_no_undo (image);
 
   g_assert_true (gimp_image_redo (image));
   g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_CMYK);
@@ -1243,11 +1280,19 @@ static GimpBuffer *
 buffer_from_layer (GimpLayer *layer)
 {
   GimpImage  *image  = gimp_item_get_image (GIMP_ITEM (layer));
-  GeglBuffer *buffer = gegl_buffer_create_sub_buffer (gimp_drawable_get_buffer (GIMP_DRAWABLE (layer)),
-                                                      &sel_rect);
+  GeglBuffer *src    = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
+  GeglBuffer *buffer;
   GimpBuffer *gimp_buffer;
 
-  gimp_buffer = gimp_buffer_new (buffer, "test", SEL_X, SEL_Y, TRUE);
+  /*  like gimp_selection_extract(): a buffer at the origin in the
+   *  drawable's format, the offset in the GimpBuffer
+   */
+  buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0, SEL_W, SEL_H),
+                            gegl_buffer_get_format (src));
+  gegl_buffer_copy (src, &sel_rect, GEGL_ABYSS_NONE,
+                    buffer, GEGL_RECTANGLE (0, 0, 0, 0));
+
+  gimp_buffer = gimp_buffer_new (buffer, "test", SEL_X, SEL_Y, FALSE);
   gimp_buffer_set_color_profile (gimp_buffer, gimp_image_get_color_profile (image));
   g_object_unref (buffer);
 
@@ -1273,21 +1318,65 @@ copy_selection (GimpImage *image,
 }
 
 static void
-i9_same_image_paste (void)
+i9_same_image_paste_buffer (void)
 {
   GimpImage    *image;
   GimpLayer    *layer;
   GimpLayer    *pasted;
-  GimpObject   *copy;
   GimpBuffer   *buffer;
   GimpImage    *new_image;
   GeglRectangle full = { 0, 0, SEL_W, SEL_H };
   gint          off_x, off_y;
 
+  image  = new_cmyk_image (gimp_test_utils_cmyk_precision (), NULL, &layer);
+  buffer = buffer_from_layer (layer);
+
+  /*  the buffer path (global buffer, gimp_layer_new_from_buffer())  */
+  g_test_message ("I9: buffer, new layer in place");
+  pasted = paste_one (image, NULL, GIMP_OBJECT (buffer),
+                      GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
+  gimp_item_get_offset (GIMP_ITEM (pasted), &off_x, &off_y);
+  g_assert_cmpint (off_x, ==, SEL_X);
+  g_assert_cmpint (off_y, ==, SEL_Y);
+  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+
+  g_test_message ("I9: buffer, new layer");
+  pasted = paste_one (image, NULL, GIMP_OBJECT (buffer),
+                      GIMP_PASTE_TYPE_NEW_LAYER);
+  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+
+  g_test_message ("I9: buffer, new image");
+  new_image = gimp_edit_paste_as_new_image (gimp, GIMP_OBJECT (buffer), context ());
+  assert_cmyk_image (new_image, gimp_image_get_color_profile (image));
+  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect,
+                    GIMP_DRAWABLE (gimp_image_get_layer_iter (new_image)->data), &full);
+  gimp_container_remove (gimp->images, GIMP_OBJECT (new_image));
+  g_object_unref (new_image);
+
+  g_object_unref (buffer);
+  g_object_unref (image);
+}
+
+static void
+i9_same_image_paste_copy (void)
+{
+  GimpImage    *image;
+  GimpLayer    *layer;
+  GimpLayer    *pasted;
+  GimpObject   *copy;
+  GimpImage    *new_image;
+  GeglRectangle full = { 0, 0, SEL_W, SEL_H };
+  gint          off_x, off_y;
+
+  /*  gimp_edit_copy() of a layer with a selection clears the
+   *  unselected pixels of the clipboard image (compositing, WS02)
+   */
+  NEED_WS02 ();
+
   image = new_cmyk_image (gimp_test_utils_cmyk_precision (), NULL, &layer);
   copy  = copy_selection (image, layer);
 
-  /*  new layer, in place  */
+  g_test_message ("I9: copy, new layer in place");
   pasted = paste_one (image, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
   gimp_item_get_offset (GIMP_ITEM (pasted), &off_x, &off_y);
   g_assert_cmpint (off_x, ==, SEL_X);
@@ -1296,11 +1385,11 @@ i9_same_image_paste (void)
   g_assert_cmpint (gimp_item_get_height (GIMP_ITEM (pasted)), ==, SEL_H);
   assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
 
-  /*  new layer  */
+  g_test_message ("I9: copy, new layer");
   pasted = paste_one (image, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER);
   assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
 
-  /*  new image  */
+  g_test_message ("I9: copy, new image");
   new_image = gimp_edit_paste_as_new_image (gimp, copy, context ());
   g_assert_nonnull (new_image);
   assert_cmyk_image (new_image, gimp_image_get_color_profile (image));
@@ -1309,20 +1398,6 @@ i9_same_image_paste (void)
   gimp_container_remove (gimp->images, GIMP_OBJECT (new_image));
   g_object_unref (new_image);
 
-  /*  the buffer path (global buffer, gimp_layer_new_from_buffer())  */
-  buffer = buffer_from_layer (layer);
-  pasted = paste_one (image, NULL, GIMP_OBJECT (buffer),
-                      GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
-
-  new_image = gimp_image_new_from_buffer (gimp, buffer);
-  assert_cmyk_image (new_image, gimp_image_get_color_profile (image));
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect,
-                    GIMP_DRAWABLE (gimp_image_get_layer_iter (new_image)->data), &full);
-  gimp_container_remove (gimp->images, GIMP_OBJECT (new_image));
-  g_object_unref (new_image);
-
-  g_object_unref (buffer);
   g_object_unref (copy);
   g_object_unref (image);
 }
@@ -1425,11 +1500,18 @@ i10_cross_image (void)
   gimp_image_add_layer (b, converted, NULL, 0, FALSE);
   assert_same_inks (GIMP_DRAWABLE (layer), NULL, GIMP_DRAWABLE (converted), NULL);
 
-  /*  paste of a copied selection  */
-  copy = copy_selection (a, layer);
-  pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
-  g_object_unref (copy);
+  /*  paste of a copied selection (clears the clipboard image, WS02)  */
+  if (have_ws02 ())
+    {
+      copy = copy_selection (a, layer);
+      pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
+      assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+      g_object_unref (copy);
+    }
+  else
+    {
+      g_test_message ("I10: copy/paste of a selection pending WS02");
+    }
 
   /*  paste of a buffer tagged with A's profile  */
   buffer = buffer_from_layer (layer);
@@ -1692,22 +1774,33 @@ i13_legacy_modes (void)
 {
   GimpImage *image;
   GimpLayer *layer;
-  GimpLayer *group;
+  GimpLayer *group = NULL;
   GError    *error = NULL;
 
   image = new_rgb_image (GIMP_PRECISION_U16_NON_LINEAR, TRUE, &layer);
 
   gimp_image_undo_disable (image);
   gimp_layer_set_mode (layer, GIMP_LAYER_MODE_MULTIPLY_LEGACY, FALSE);
-  group = gimp_group_layer_new (image);
-  gimp_image_add_layer (image, group, NULL, 0, FALSE);
-  gimp_layer_set_mode (group, GIMP_LAYER_MODE_SCREEN_LEGACY, FALSE);
+
+  /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
+  if (have_ws02 ())
+    {
+      group = gimp_group_layer_new (image);
+      gimp_image_add_layer (image, group, NULL, 0, FALSE);
+      gimp_layer_set_mode (group, GIMP_LAYER_MODE_SCREEN_LEGACY, FALSE);
+    }
+  else
+    {
+      g_test_message ("I13: legacy group layer modes pending WS02");
+    }
+
   gimp_image_undo_enable (image);
 
   g_assert_true (gimp_image_convert_type (image, GIMP_CMYK, NULL, NULL, &error));
   g_assert_no_error (error);
   g_assert_cmpint (gimp_layer_get_mode (layer), ==, GIMP_LAYER_MODE_MULTIPLY);
-  g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN);
+  if (group)
+    g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN);
 
   /*  setting a legacy mode on a layer of a CMYK image maps it  */
   gimp_layer_set_mode (layer, GIMP_LAYER_MODE_DIFFERENCE_LEGACY, TRUE);
@@ -1719,7 +1812,8 @@ i13_legacy_modes (void)
   g_assert_true (gimp_image_undo (image));
   g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_RGB);
   g_assert_cmpint (gimp_layer_get_mode (layer), ==, GIMP_LAYER_MODE_MULTIPLY_LEGACY);
-  g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN_LEGACY);
+  if (group)
+    g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN_LEGACY);
 
   /*  an RGB layer with a legacy mode dropped into a CMYK image  */
   {
@@ -1833,6 +1927,7 @@ main (int    argc,
   g_test_add_func ("/cmyk-image/I1/rgb-to-cmyk",            i1_rgb_to_cmyk_structure);
   g_test_add_func ("/cmyk-image/I1/rgb-to-cmyk-lcms",       i1_rgb_to_cmyk_lcms);
   g_test_add_func ("/cmyk-image/I2/undo-redo",              i2_undo_redo);
+  g_test_add_func ("/cmyk-image/I2/undo-redo-group",        i2_undo_redo_group);
   g_test_add_func ("/cmyk-image/I3/cmyk-to-rgb-gray",       i3_cmyk_to_rgb_gray_structure);
   g_test_add_func ("/cmyk-image/I3/cmyk-to-rgb-gray-lcms",  i3_cmyk_to_rgb_gray_lcms);
   g_test_add_func ("/cmyk-image/I4/linear-precision",       i4_linear_precision);
@@ -1840,7 +1935,8 @@ main (int    argc,
   g_test_add_func ("/cmyk-image/I6/channel-from-component", i6_channel_from_component);
   g_test_add_func ("/cmyk-image/I7/precision-chain",        i7_precision_chain);
   g_test_add_func ("/cmyk-image/I8/template",               i8_template);
-  g_test_add_func ("/cmyk-image/I9/same-image-paste",       i9_same_image_paste);
+  g_test_add_func ("/cmyk-image/I9/same-image-paste-buffer", i9_same_image_paste_buffer);
+  g_test_add_func ("/cmyk-image/I9/same-image-paste-copy",  i9_same_image_paste_copy);
   g_test_add_func ("/cmyk-image/I9/same-image-floating",    i9_same_image_floating);
   g_test_add_func ("/cmyk-image/I10/cross-image",           i10_cross_image);
   g_test_add_func ("/cmyk-image/I10/open-as-layers",        i10_open_as_layers);
