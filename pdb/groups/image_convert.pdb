@@ -365,7 +365,8 @@ CODE
     );
 }
 
-@headers = qw("libgimpcolor/gimpcolor.h"
+@headers = qw(<cairo.h>
+              "libgimpcolor/gimpcolor.h"
               "gegl/gimp-babl.h"
               "core/gimp.h"
               "core/gimpimage.h"
