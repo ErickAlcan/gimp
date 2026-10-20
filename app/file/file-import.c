@@ -63,11 +63,16 @@ file_import_image (GimpImage    *image,
       if (config->import_promote_float)
         {
           GimpPrecision old_precision = gimp_image_get_precision (image);
+          GimpPrecision new_precision = GIMP_PRECISION_FLOAT_LINEAR;
 
-          if (old_precision != GIMP_PRECISION_FLOAT_LINEAR)
+          /*  I2: CMYK images only use non-linear precisions  */
+          if (gimp_image_get_base_type (image) == GIMP_CMYK)
+            new_precision = GIMP_PRECISION_FLOAT_NON_LINEAR;
+
+          if (old_precision != new_precision)
             {
               gimp_image_convert_precision (image,
-                                            GIMP_PRECISION_FLOAT_LINEAR,
+                                            new_precision,
                                             GEGL_DITHER_NONE,
                                             GEGL_DITHER_NONE,
                                             GEGL_DITHER_NONE,
