@@ -673,18 +673,24 @@ const Babl *
 gimp_fill_options_get_format (GimpFillOptions *options,
                               GimpDrawable    *drawable)
 {
-  GimpContext *context;
+  GimpContext   *context;
+  GimpLayerMode  paint_mode;
 
   g_return_val_if_fail (GIMP_IS_FILL_OPTIONS (options), NULL);
   g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), NULL);
 
-  context = GIMP_CONTEXT (options);
+  context    = GIMP_CONTEXT (options);
+  paint_mode = gimp_context_get_paint_mode (context);
 
-  return gimp_layer_mode_get_format (gimp_context_get_paint_mode (context),
+  /*  legacy modes are not available in CMYK images (I9)  */
+  if (gimp_drawable_is_cmyk (drawable))
+    paint_mode = gimp_layer_mode_get_non_legacy (paint_mode);
+
+  return gimp_layer_mode_get_format (paint_mode,
                                      GIMP_LAYER_COLOR_SPACE_AUTO,
                                      GIMP_LAYER_COLOR_SPACE_AUTO,
                                      gimp_layer_mode_get_paint_composite_mode (
-                                       gimp_context_get_paint_mode (context)),
+                                       paint_mode),
                                      gimp_drawable_get_format (drawable));
 }
 
