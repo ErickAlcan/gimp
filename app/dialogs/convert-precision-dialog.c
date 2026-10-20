@@ -91,6 +91,7 @@ convert_precision_dialog_new (GimpImage                    *image,
   gint           new_bits;
   gboolean       dither;
   GimpTRCType    trc;
+  gboolean       is_cmyk;
 
   g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
   g_return_val_if_fail (GIMP_IS_CONTEXT (context), NULL);
@@ -99,10 +100,12 @@ convert_precision_dialog_new (GimpImage                    *image,
 
   /* random formats with the right precision */
   old_format = gimp_image_get_layer_format (image, FALSE);
+  is_cmyk    = gimp_babl_format_is_cmyk (old_format);
   new_format = gimp_babl_format (GIMP_RGB,
                                  gimp_babl_precision (component_type, FALSE),
                                  FALSE,
-                                 babl_format_get_space (old_format));
+                                 is_cmyk ?
+                                 NULL : babl_format_get_space (old_format));
 
   old_bits = (babl_format_get_bytes_per_pixel (old_format) * 8 /
               babl_format_get_n_components (old_format));
@@ -117,6 +120,10 @@ convert_precision_dialog_new (GimpImage                    *image,
 
   trc = gimp_babl_format_get_trc (old_format);
   trc = gimp_suggest_trc_for_component_type (component_type, trc);
+
+  /*  CMYK images only use non-linear precisions, there is no choice  */
+  if (is_cmyk)
+    trc = GIMP_TRC_NON_LINEAR;
 
   private = g_slice_new0 (ConvertDialog);
 
@@ -198,6 +205,9 @@ convert_precision_dialog_new (GimpImage                    *image,
 
   gtk_container_add (GTK_CONTAINER (frame), vbox);
   gtk_widget_set_visible (vbox, TRUE);
+
+  if (is_cmyk)
+    gtk_widget_set_visible (frame, FALSE);
 
 
   /*  dithering  */

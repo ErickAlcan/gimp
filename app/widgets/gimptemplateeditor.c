@@ -76,6 +76,8 @@ struct _GimpTemplateEditorPrivate
   GtkWidget     *resolution_se;
   GtkWidget     *chain_button;
   GtkWidget     *precision_combo;
+  GtkWidget     *trc_label;
+  GtkWidget     *trc_combo;
   GtkWidget     *profile_combo;
   GtkWidget     *simulation_profile_combo;
   GtkWidget     *simulation_intent_combo;
@@ -398,7 +400,23 @@ gimp_template_editor_constructed (GObject *object)
 
   combo = gimp_prop_enum_combo_box_new (G_OBJECT (template),
                                         "image-type",
-                                        GIMP_RGB, GIMP_GRAY);
+                                        GIMP_RGB, GIMP_CMYK);
+
+  /*  indexed images can't be created directly, CMYK images only if
+   *  babl can convert CMYK through ICC profiles
+   */
+    {
+      GtkTreeModel *model = gtk_combo_box_get_model (GTK_COMBO_BOX (combo));
+      GtkTreeIter   iter;
+
+      if (gimp_int_store_lookup_by_value (model, GIMP_INDEXED, &iter))
+        gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
+
+      if (! gimp_babl_has_cmyk_support () &&
+          gimp_int_store_lookup_by_value (model, GIMP_CMYK, &iter))
+        gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
+    }
+
   gimp_grid_attach_aligned (GTK_GRID (grid), 0, row++,
                             _("Color _space:"), 0.0, 0.5,
                             combo, 1);
@@ -428,12 +446,12 @@ gimp_template_editor_constructed (GObject *object)
                     G_CALLBACK (gimp_template_editor_precision_changed),
                     editor);
 
-  combo = gimp_prop_enum_combo_box_new (G_OBJECT (template), "trc",
-                                        GIMP_TRC_LINEAR,
-                                        GIMP_TRC_NON_LINEAR);
-  gimp_grid_attach_aligned (GTK_GRID (grid), 0, row++,
-                            _("_Gamma:"), 0.0, 0.5,
-                            combo, 1);
+  private->trc_combo = gimp_prop_enum_combo_box_new (G_OBJECT (template), "trc",
+                                                     GIMP_TRC_LINEAR,
+                                                     GIMP_TRC_NON_LINEAR);
+  private->trc_label = gimp_grid_attach_aligned (GTK_GRID (grid), 0, row++,
+                                                 _("_Gamma:"), 0.0, 0.5,
+                                                 private->trc_combo, 1);
 
   private->profile_combo =
     gimp_prop_profile_combo_box_new (G_OBJECT (template),
@@ -689,6 +707,10 @@ gimp_template_editor_precision_changed (GtkWidget          *widget,
 
   trc = gimp_suggest_trc_for_component_type (component_type, trc);
 
+  /*  CMYK images only use non-linear precisions  */
+  if (gimp_template_get_base_type (private->template) == GIMP_CMYK)
+    trc = GIMP_TRC_NON_LINEAR;
+
   g_object_set (private->template,
                 "component-type", component_type,
                 "trc",            trc,
@@ -869,6 +891,27 @@ gimp_template_editor_template_notify (GimpTemplate       *template,
 
   gtk_label_set_text (GTK_LABEL (private->more_label), text);
   g_free (text);
+
+  if (! param_spec                              ||
+      ! strcmp (param_spec->name, "image-type") ||
+      ! strcmp (param_spec->name, "trc"))
+    {
+      gboolean is_cmyk = (gimp_template_get_base_type (template) == GIMP_CMYK);
+
+      /*  CMYK has no gamma choice, it is always non-linear  */
+      if (is_cmyk &&
+          gimp_babl_trc (gimp_template_get_precision (template)) !=
+          GIMP_TRC_NON_LINEAR)
+        {
+          g_object_set (template, "trc", GIMP_TRC_NON_LINEAR, NULL);
+        }
+
+      if (private->trc_combo)
+        {
+          gtk_widget_set_visible (private->trc_combo, ! is_cmyk);
+          gtk_widget_set_visible (private->trc_label, ! is_cmyk);
+        }
+    }
 
   if (! param_spec                              ||
       ! strcmp (param_spec->name, "image-type") ||
