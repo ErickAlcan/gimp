@@ -155,29 +155,47 @@ gimp_image_pick_color (GimpImage   *image,
     {
       GimpColorProfile *profile = gimp_image_get_color_profile (image);
       const Babl *space         = NULL;
-      gdouble     sample[4]     = {};
+      gdouble     sample[MAX_CHANNELS] = {};
       const Babl *format;
 
-      if (profile)
-        space = gimp_color_profile_get_space (profile,
-                                              GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
-                                              NULL);
-      format = babl_format_with_space ("RaGaBaA double", space);
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          /*  m12: average CMYK as inks, in the image space  */
+          space  = gimp_image_get_layer_space (image);
+          format = babl_format_with_space ("CaMaYaKaA double", space);
+        }
+      else
+        {
+          if (profile)
+            space = gimp_color_profile_get_space (profile,
+                                                  GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                                  NULL);
+          format = babl_format_with_space ("RaGaBaA double", space);
+        }
 
-      if (! result)
-        memset (pixel, 0, babl_format_get_bytes_per_pixel (*sample_format));
+      if (! result && pixel)
+        memset (pixel, 0,
+                babl_format_get_bytes_per_pixel (gimp_pickable_get_format (pickable)));
 
       if (sample_average)
         {
           GeglBuffer *buffer = gimp_pickable_get_buffer (pickable);
           gint        radius = floor (average_radius);
 
-          gimp_gegl_average_color (buffer,
-                                   GEGL_RECTANGLE (x - radius,
-                                                   y - radius,
-                                                   2 * radius + 1,
-                                                   2 * radius + 1),
-                                   FALSE, GEGL_ABYSS_NONE, format, sample);
+          if (gimp_babl_format_is_cmyk (format))
+            gimp_pickable_average_color_native (buffer,
+                                                GEGL_RECTANGLE (x - radius,
+                                                                y - radius,
+                                                                2 * radius + 1,
+                                                                2 * radius + 1),
+                                                FALSE, format, sample);
+          else
+            gimp_gegl_average_color (buffer,
+                                     GEGL_RECTANGLE (x - radius,
+                                                     y - radius,
+                                                     2 * radius + 1,
+                                                     2 * radius + 1),
+                                     FALSE, GEGL_ABYSS_NONE, format, sample);
         }
 
       if (! result || sample_average)

@@ -65,6 +65,11 @@ gboolean        gimp_pickable_get_pixel_at            (GimpPickable        *pick
                                                        gint                 y,
                                                        const Babl          *format,
                                                        gpointer             pixel);
+void            gimp_pickable_average_color_native    (GeglBuffer          *buffer,
+                                                       const GeglRectangle *rect,
+                                                       gboolean             clip_to_buffer,
+                                                       const Babl          *format,
+                                                       gpointer             pixel);
 GeglColor     * gimp_pickable_get_color_at            (GimpPickable        *pickable,
                                                        gint                 x,
                                                        gint                 y);

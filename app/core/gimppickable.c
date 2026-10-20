@@ -38,6 +38,8 @@
 
 #include "core-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpobject.h"
 #include "gimpimage.h"
 #include "gimppickable.h"
@@ -76,25 +78,34 @@ gimp_pickable_real_get_pixel_average (GimpPickable        *pickable,
                                       gpointer             pixel)
 {
   const Babl *average_format;
-  gdouble     average[4] = { 0, };
+  gdouble     average[MAX_CHANNELS] = { 0, };
+  gint        n_components;
   gint        n          = 0;
   gint        x;
   gint        y;
   gint        c;
 
-  average_format = babl_format_with_space ("RaGaBaA double",
-                                           babl_format_get_space (format));
+  /*  average premultiplied, in the native color model: CMYK pixels are
+   *  averaged as inks (m12), not through RGB
+   */
+  if (gimp_babl_format_is_cmyk (format))
+    average_format = babl_format_with_space ("CaMaYaKaA double", format);
+  else
+    average_format = babl_format_with_space ("RaGaBaA double",
+                                             babl_format_get_space (format));
+
+  n_components = babl_format_get_n_components (average_format);
 
   for (y = rect->y; y < rect->y + rect->height; y++)
     {
       for (x = rect->x; x < rect->x + rect->width; x++)
         {
-          gdouble sample[4];
+          gdouble sample[MAX_CHANNELS];
 
           if (gimp_pickable_get_pixel_at (pickable,
                                           x, y, average_format, sample))
             {
-              for (c = 0; c < 4; c++)
+              for (c = 0; c < n_components; c++)
                 average[c] += sample[c];
 
               n++;
@@ -104,7 +115,7 @@ gimp_pickable_real_get_pixel_average (GimpPickable        *pickable,
 
   if (n > 0)
     {
-      for (c = 0; c < 4; c++)
+      for (c = 0; c < n_components; c++)
         average[c] /= n;
     }
 
@@ -245,10 +256,94 @@ gimp_pickable_get_pixel_average (GimpPickable        *pickable,
 
   pickable_iface = GIMP_PICKABLE_GET_IFACE (pickable);
 
-  if (pickable_iface->get_pixel_average)
+  /*  m12: CMYK is averaged as inks.  The pickables' get_pixel_average()
+   *  implementations use gimp_gegl_average_color(), which averages in
+   *  RGB, so CMYK is handled here, on the pickable's buffer.
+   */
+  if (gimp_babl_format_is_cmyk (format) && gimp_pickable_get_buffer (pickable))
+    gimp_pickable_average_color_native (gimp_pickable_get_buffer (pickable),
+                                        rect, TRUE, format, pixel);
+  else if (pickable_iface->get_pixel_average)
     pickable_iface->get_pixel_average (pickable, rect, format, pixel);
   else
     memset (pixel, 0, babl_format_get_bytes_per_pixel (format));
+}
+
+/**
+ * gimp_pickable_average_color_native:
+ * @buffer:         a #GeglBuffer with a CMYK (or any) format
+ * @rect:           the area to average
+ * @clip_to_buffer: whether to clip @rect to @buffer's extent; if %FALSE
+ *                  pixels outside count as transparent
+ * @format:         the format of @pixel
+ * @pixel:          (out caller-allocates): the average, in @format
+ *
+ * Averages @rect premultiplied in the native color model of @format
+ * ("CaMaYaKaA double" in @format's space for CMYK, "RaGaBaA double"
+ * otherwise), without a detour through another color model.
+ **/
+void
+gimp_pickable_average_color_native (GeglBuffer          *buffer,
+                                    const GeglRectangle *rect,
+                                    gboolean             clip_to_buffer,
+                                    const Babl          *format,
+                                    gpointer             pixel)
+{
+  const Babl         *average_format;
+  GeglBufferIterator *iter;
+  GeglRectangle       roi;
+  gdouble             sum[MAX_CHANNELS] = { 0, };
+  gint64              n = 0;
+  gint                n_components;
+  gint                c;
+
+  g_return_if_fail (GEGL_IS_BUFFER (buffer));
+  g_return_if_fail (rect != NULL);
+  g_return_if_fail (format != NULL);
+  g_return_if_fail (pixel != NULL);
+
+  if (gimp_babl_format_is_cmyk (format))
+    average_format = babl_format_with_space ("CaMaYaKaA double", format);
+  else
+    average_format = babl_format_with_space ("RaGaBaA double",
+                                             babl_format_get_space (format));
+
+  n_components = babl_format_get_n_components (average_format);
+
+  if (clip_to_buffer)
+    gegl_rectangle_intersect (&roi, rect, gegl_buffer_get_extent (buffer));
+  else
+    roi = *rect;
+
+  if (roi.width > 0 && roi.height > 0)
+    {
+      iter = gegl_buffer_iterator_new (buffer, &roi, 0, average_format,
+                                       GEGL_ACCESS_READ, GEGL_ABYSS_NONE, 1);
+
+      while (gegl_buffer_iterator_next (iter))
+        {
+          const gdouble *p = iter->items[0].data;
+          gint           i;
+
+          for (i = 0; i < iter->length; i++)
+            {
+              for (c = 0; c < n_components; c++)
+                sum[c] += p[c];
+
+              p += n_components;
+            }
+
+          n += iter->length;
+        }
+    }
+
+  if (n > 0)
+    {
+      for (c = 0; c < n_components; c++)
+        sum[c] /= n;
+    }
+
+  babl_process (babl_fish (average_format, format), sum, pixel, 1);
 }
 
 GeglColor *
@@ -257,7 +352,7 @@ gimp_pickable_get_color_at (GimpPickable *pickable,
                             gint          y)
 {
   GeglColor *color = NULL;
-  gdouble    pixel[4];
+  gdouble    pixel[MAX_CHANNELS]; /* I10: native format, up to CMYKA double */
 
   g_return_val_if_fail (GIMP_IS_PICKABLE (pickable), FALSE);
 
@@ -287,6 +382,11 @@ gimp_pickable_get_opacity_at (GimpPickable *pickable,
   return GIMP_OPACITY_TRANSPARENT;
 }
 
+/*  @pixel (nullable) receives the pixel in gimp_pickable_get_format();
+ *  it must have room for that format, i.e. gdouble[MAX_CHANNELS] (I10).
+ *  With @sample_average, @color is the average over the radius,
+ *  computed in the pickable's color model (CMYK inks for CMYK).
+ */
 gboolean
 gimp_pickable_pick_color (GimpPickable *pickable,
                           gint          x,
@@ -297,7 +397,7 @@ gimp_pickable_pick_color (GimpPickable *pickable,
                           GeglColor   **color)
 {
   const Babl *format;
-  gdouble     sample[4];
+  gdouble     sample[MAX_CHANNELS]; /* I10: native format, up to CMYKA double */
 
   g_return_val_if_fail (GIMP_IS_PICKABLE (pickable), FALSE);
   g_return_val_if_fail (color != NULL && GEGL_IS_COLOR (*color), FALSE);
