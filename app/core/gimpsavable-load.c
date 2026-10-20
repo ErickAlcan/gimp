@@ -21,10 +21,12 @@
 
 #include "config.h"
 
+#include <cairo.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gegl.h>
 
 #include "libgimpbase/gimpbase.h"
+#include "libgimpcolor/gimpcolor.h"
 #include "libgimpconfig/gimpconfig.h"
 
 #include "core-types.h"
@@ -2213,20 +2215,32 @@ gimp_savable_exit_icc (GimpLoadState  *state,
                        gpointer        user_data,
                        GError        **error)
 {
-  const Babl *space;
-  gchar      *b64;
-  guchar     *icc;
-  gsize       icc_len;
-  const char *babl_error = NULL;
+  GimpColorProfile *profile;
+  const Babl       *space     = NULL;
+  gchar            *b64;
+  guchar           *icc;
+  gsize             icc_len;
+  GError           *icc_error = NULL;
 
   b64 = gimp_savable_validate_base64 (text, len, error);
   if (b64 == NULL)
     return FALSE;
 
-  icc   = g_base64_decode (b64, &icc_len);
-  space = babl_space_from_icc ((const char *) icc, icc_len,
-                               BABL_ICC_INTENT_RELATIVE_COLORIMETRIC,
-                               &babl_error);
+  icc = g_base64_decode (b64, &icc_len);
+
+  /*  I8: go through gimp_color_profile_get_space(), so equal CMYK
+   *  profiles map to one canonical babl space
+   */
+  profile = gimp_color_profile_new_from_icc_profile (icc, icc_len, &icc_error);
+
+  if (profile)
+    {
+      space = gimp_color_profile_get_space (profile,
+                                            GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                            &icc_error);
+      g_object_unref (profile);
+    }
+
   if (space)
     {
       gimp_savable_load_store_value (state, "space", (gpointer) space, NULL);
@@ -2236,7 +2250,8 @@ gimp_savable_exit_icc (GimpLoadState  *state,
     {
       g_set_error (error, GIMP_WLBR_ERROR, GIMP_WLBR_ERROR_DATA,
                    "%s: invalid ICC data: %s",
-                   G_STRFUNC, babl_error);
+                   G_STRFUNC, icc_error ? icc_error->message : "");
+      g_clear_error (&icc_error);
     }
 
   g_free (icc);

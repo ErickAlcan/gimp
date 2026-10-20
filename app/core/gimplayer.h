@@ -201,6 +201,8 @@ gdouble         gimp_layer_get_opacity         (GimpLayer            *layer);
 void            gimp_layer_set_mode            (GimpLayer            *layer,
                                                 GimpLayerMode         mode,
                                                 gboolean              push_undo);
+gboolean        gimp_layer_map_legacy_mode     (GimpLayer            *layer,
+                                                gboolean              push_undo);
 GimpLayerMode   gimp_layer_get_mode            (GimpLayer            *layer);
 
 void            gimp_layer_set_blend_space     (GimpLayer            *layer,

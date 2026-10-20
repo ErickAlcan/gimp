@@ -27,6 +27,8 @@
 
 #include "core-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimp.h"
 #include "gimpbuffer.h"
 #include "gimpchannel.h"
@@ -230,15 +232,25 @@ gimp_pattern_clipboard_changed (Gimp        *gimp,
 
   if (buffer)
     {
-      gint width  = MIN (gegl_buffer_get_width  (buffer), PATTERN_MAX_SIZE);
-      gint height = MIN (gegl_buffer_get_height (buffer), PATTERN_MAX_SIZE);
+      const Babl *format = gegl_buffer_get_format (buffer);
+      gint        width  = MIN (gegl_buffer_get_width  (buffer), PATTERN_MAX_SIZE);
+      gint        height = MIN (gegl_buffer_get_height (buffer), PATTERN_MAX_SIZE);
 
-      pattern->mask = gimp_temp_buf_new (width, height,
-                                         gegl_buffer_get_format (buffer));
+      /*  patterns are RGB or grayscale data (PDB, plug-ins and
+       *  pattern files expect that); CMYK clipboard contents are
+       *  converted to RGB
+       */
+      if (gimp_babl_format_is_cmyk (format))
+        format = gimp_babl_format (GIMP_RGB,
+                                   gimp_babl_format_get_precision (format),
+                                   babl_format_has_alpha (format),
+                                   NULL);
+
+      pattern->mask = gimp_temp_buf_new (width, height, format);
 
       gegl_buffer_get (buffer,
                        GEGL_RECTANGLE (0, 0, width, height), 1.0,
-                       NULL,
+                       format,
                        gimp_temp_buf_get_data (pattern->mask),
                        GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
 

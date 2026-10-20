@@ -169,7 +169,12 @@ gimp_image_metadata_update_colorspace (GimpImage *image)
       GimpColorProfile       *profile = gimp_image_get_color_profile (image);
       GimpMetadataColorspace  space   = GIMP_METADATA_COLORSPACE_UNSPECIFIED;
 
-      if (profile)
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          /*  Exif ColorSpace only knows sRGB and Adobe RGB  */
+          space = GIMP_METADATA_COLORSPACE_UNCALIBRATED;
+        }
+      else if (profile)
         {
           static GimpColorProfile *adobe = NULL;
 

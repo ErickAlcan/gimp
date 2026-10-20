@@ -1065,8 +1065,32 @@ gimp_image_set_property (GObject      *object,
       break;
 
     case PROP_BASE_TYPE:
-      private->base_type = g_value_get_enum (value);
-      _gimp_image_free_color_transforms (image);
+      {
+        GimpImageBaseType base_type = g_value_get_enum (value);
+
+        if (base_type != private->base_type)
+          {
+            gint i;
+
+            /*  m8: component indices mean different components in
+             *  different base types (3 is alpha in RGB but K in CMYK),
+             *  reset the component state
+             */
+            for (i = 0; i < MAX_CHANNELS; i++)
+              {
+                private->visible[i] = TRUE;
+                private->active[i]  = TRUE;
+              }
+
+            if (private->visible_mask)
+              gegl_node_set (private->visible_mask,
+                             "mask", 0,
+                             NULL);
+          }
+
+        private->base_type = base_type;
+        _gimp_image_free_color_transforms (image);
+      }
       break;
 
     case PROP_PRECISION:
@@ -4849,9 +4873,12 @@ gimp_image_parasite_attach (GimpImage          *image,
 
   name = gimp_parasite_get_name (parasite);
 
-  /*  this is so ugly and is only for the PDB  */
-  if (strcmp (name, GIMP_ICC_PROFILE_PARASITE_NAME) == 0 ||
-      strcmp (name, GIMP_SIMULATION_ICC_PROFILE_PARASITE_NAME) == 0)
+  /*  this is so ugly and is only for the PDB; it only applies to the
+   *  image's color profile: a simulation profile equal to the builtin
+   *  profile is a valid simulation profile and must not remove the
+   *  image's color profile
+   */
+  if (strcmp (name, GIMP_ICC_PROFILE_PARASITE_NAME) == 0)
     {
       GimpColorProfile *profile;
       GimpColorProfile *builtin;
@@ -4865,7 +4892,8 @@ gimp_image_parasite_attach (GimpImage          *image,
       builtin = gimp_image_get_builtin_color_profile (image);
 
       /*  CMYK images always carry their profile (I1)  */
-      if (gimp_image_get_base_type (image) != GIMP_CMYK &&
+      if (profile &&
+          gimp_image_get_base_type (image) != GIMP_CMYK &&
           gimp_color_profile_is_equal (profile, builtin))
         {
           /* setting the builtin profile is equal to removing the profile */
@@ -4875,7 +4903,7 @@ gimp_image_parasite_attach (GimpImage          *image,
           return;
         }
 
-      g_object_unref (profile);
+      g_clear_object (&profile);
     }
 
   /*  make a temporary copy of the GimpParasite struct because

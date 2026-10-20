@@ -834,6 +834,17 @@ gimp_image_convert_indexed (GimpImage               *image,
 
   g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
   g_return_val_if_fail (gimp_image_get_base_type (image) != GIMP_INDEXED, FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  /*  CMYK indexed palettes are out of scope  */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      g_set_error_literal (error, GIMP_ERROR, GIMP_FAILED,
+                           _("Cannot convert a CMYK image to indexed. "
+                             "Convert the image to RGB first."));
+      return FALSE;
+    }
+
   g_return_val_if_fail (gimp_babl_is_valid (GIMP_INDEXED,
                                             gimp_image_get_precision (image)),
                         FALSE);

@@ -26,6 +26,8 @@
 
 #include "core-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "gimpchannel.h"
 #include "gimpcontainer.h"
 #include "gimpcontext.h"
@@ -310,7 +312,15 @@ gimp_palette_import_extract (GimpImage     *image,
 
   buffer = gimp_pickable_get_buffer (pickable);
   if (*format == NULL)
-    *format = babl_format_with_space ("R'G'B'A u8", gimp_image_get_layer_space (image));
+    {
+      const Babl *space = gimp_image_get_layer_space (image);
+
+      /*  palettes are RGB; colors of CMYK images are imported as sRGB  */
+      if (gimp_babl_space_is_cmyk (space))
+        space = NULL;
+
+      *format = babl_format_with_space ("R'G'B'A u8", space);
+    }
 
   iter = gegl_buffer_iterator_new (buffer, &rect, 0, *format,
                                    GEGL_ACCESS_READ, GEGL_ABYSS_NONE, 2);

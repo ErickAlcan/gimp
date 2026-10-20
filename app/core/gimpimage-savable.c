@@ -635,8 +635,33 @@ gimp_image_exit_format (GimpLoadState  *state,
                                        "dimensions:height", &height,
                                        NULL);
 
+  if (format == NULL)
+    {
+      GIMP_SAVABLE_LOAD_ERROR (error, GIMP_WLBR_ERROR_DATA, ;,
+                               "%s: missing image format", G_STRFUNC);
+      return FALSE;
+    }
+
   image_type = gimp_babl_format_get_base_type (format);
   precision  = gimp_babl_format_get_precision (format);
+
+  /*  the preconditions of gimp_image_new() (INTERFACES §4, m6)  */
+  if (image_type == GIMP_CMYK && ! gimp_babl_has_cmyk_support ())
+    {
+      GIMP_SAVABLE_LOAD_ERROR (error, GIMP_WLBR_ERROR_DATA, ;,
+                               "%s: CMYK images are not supported "
+                               "(babl was built without LCMS)", G_STRFUNC);
+      return FALSE;
+    }
+
+  if (! gimp_babl_is_valid (image_type, precision))
+    {
+      GIMP_SAVABLE_LOAD_ERROR (error, GIMP_WLBR_ERROR_DATA, ;,
+                               "%s: invalid image format: %s",
+                               G_STRFUNC, babl_get_name (format));
+      return FALSE;
+    }
+
   image      = g_object_new (GIMP_TYPE_IMAGE,
                              "gimp",      state->gimp,
                              "width",     width,
