@@ -72,6 +72,10 @@
 #define TYPE_CMYKA_16       (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(2))
 #endif
 
+#ifndef TYPE_CMYKA_8
+#define TYPE_CMYKA_8        (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(1))
+#endif
+
 
 /**
  * SECTION: gimpcolorprofile
@@ -1535,9 +1539,9 @@ gimp_color_profile_new_d50_gray_lab_trc (void)
 
 #define CMYK_BUILTIN_BLACK_POINT   0.08
 #define CMYK_BUILTIN_SMOOTH        0.1
-#define CMYK_BUILTIN_A2B_GRID      3
-#define CMYK_BUILTIN_B2A_GRID      3
-#define CMYK_BUILTIN_DESCRIPTION   "GIMP built-in CMYK (stub)"
+#define CMYK_BUILTIN_A2B_GRID      9
+#define CMYK_BUILTIN_B2A_GRID      17
+#define CMYK_BUILTIN_DESCRIPTION   "GIMP built-in CMYK (generic, not for press)"
 #define CMYK_BUILTIN_COPYRIGHT     "Public Domain"
 
 typedef struct
@@ -1914,7 +1918,20 @@ gimp_color_profile_get_format (GimpColorProfile          *profile,
  * @format, unless lcms doesn't support @format.
  *
  * Note that this function currently only supports RGB, RGBA, R'G'B',
- * R'G'B'A, Y, YA, Y', Y'A and the cairo-RGB24 and cairo-ARGB32 formats.
+ * R'G'B'A, Y, YA, Y', Y'A, all CMYK models and the cairo-RGB24 and
+ * cairo-ARGB32 formats.
+ *
+ * CMYK formats (Since: 3.4): "CMYK u8", "CMYK u16", "CMYKA u8" and
+ * "CMYKA u16" are used as they are. Every other CMYK format (other
+ * component types, the inverted "cmyk" and "cmykA" models and the
+ * premultiplied "CaMaYaKaA" and "camayakaA" models) is substituted by
+ * "CMYK u16" or "CMYKA u16" in the same color space: lcms' floating
+ * point CMYK is in the range 0..100, and babl does the inversion and
+ * un-premultiplication. The u16 quantization is far below any visible
+ * difference. The returned format keeps the color space of @format;
+ * callers that strip spaces before calling this function (like
+ * #GimpColorTransform) rely on babl treating a CMYK format without
+ * space and the same format with a CMYK space as identical encodings.
  *
  * Returns: (nullable): the #Babl format to be used instead of @format, or %NULL
  *               if the passed @format is not supported at all.
@@ -1932,7 +1949,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
   gboolean    has_alpha;
   gboolean    rgb      = FALSE;
   gboolean    gray     = FALSE;
-  gboolean    cmyk     = FALSE;
   gboolean    linear   = FALSE;
   gboolean    srgb_trc = FALSE;
 
@@ -1944,7 +1960,41 @@ gimp_color_profile_get_lcms_format (const Babl *format,
   model     = babl_format_get_model (format);
   space     = babl_format_get_space (format);
 
-  if (format == babl_format ("cairo-RGB24"))
+  if (babl_get_model_flags (model) & BABL_MODEL_FLAG_CMYK)
+    {
+      gboolean u8    = (type == babl_type ("u8"));
+      gboolean plain = ((model == babl_model ("CMYK") ||
+                         model == babl_model ("CMYKA")) &&
+                        (u8 || type == babl_type ("u16")));
+
+      if (has_alpha)
+        {
+          if (plain)
+            {
+              *lcms_format = u8 ? TYPE_CMYKA_8 : TYPE_CMYKA_16;
+
+              return format;
+            }
+
+          *lcms_format = TYPE_CMYKA_16;
+
+          return babl_format_with_space ("CMYKA u16", space);
+        }
+      else
+        {
+          if (plain)
+            {
+              *lcms_format = u8 ? TYPE_CMYK_8 : TYPE_CMYK_16;
+
+              return format;
+            }
+
+          *lcms_format = TYPE_CMYK_16;
+
+          return babl_format_with_space ("CMYK u16", space);
+        }
+    }
+  else if (format == babl_format ("cairo-RGB24"))
     {
 #if G_BYTE_ORDER == G_LITTLE_ENDIAN
       *lcms_format = TYPE_BGRA_8;
@@ -1997,14 +2047,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
            model == babl_model ("Y'aA"))
     {
       gray = TRUE;
-    }
-  else if (model == babl_model ("CMYK"))
-#if 0
-    /* FIXME missing from babl */
-           || model == babl_model ("CMYKA"))
-#endif
-    {
-      cmyk = TRUE;
     }
   else if (model == babl_model ("CIE Lab")       ||
            model == babl_model ("CIE Lab alpha") ||
@@ -2087,12 +2129,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
                   output_format = babl_format_with_space ("Y'A " babl_t,       \
                                                           space);              \
               }                                                                \
-            else if (cmyk)                                                     \
-              {                                                                \
-                *lcms_format = TYPE_CMYKA_##lcms_t;                            \
-                                                                               \
-                output_format = format;                                        \
-              }                                                                \
           }                                                                    \
         else                                                                   \
           {                                                                    \
@@ -2123,12 +2159,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
                 else                                                           \
                   output_format = babl_format_with_space ("Y' " babl_t,        \
                                                           space);              \
-              }                                                                \
-            else if (cmyk)                                                     \
-              {                                                                \
-                *lcms_format = TYPE_CMYK_##lcms_t;                             \
-                                                                               \
-                output_format = format;                                        \
               }                                                                \
           }                                                                    \
       }                                                                        \
