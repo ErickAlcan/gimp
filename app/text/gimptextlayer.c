@@ -1154,6 +1154,185 @@ gimp_temp_buf_create_cairo_surface (GimpTempBuf *temp_buf)
   return surface;
 }
 
+/*  TRUE if every glyph of @layout is drawn in @text's single color: no
+ *  outline, and the only color attributes are the foreground color that
+ *  gimp_text_layout_apply_tags() puts around the whole text.  Markup
+ *  colors (foreground, background, underline/strikethrough/overline
+ *  colors, alpha) make the text multi-colored.
+ */
+static gboolean
+gimp_text_layer_is_solid_color (GimpTextLayer  *layer,
+                                GimpTextLayout *layout)
+{
+  PangoLayout       *pango_layout;
+  PangoAttrList     *attrs;
+  PangoAttrIterator *iter;
+  gboolean           have_color = FALSE;
+  PangoColor         first      = { 0, };
+  gboolean           solid      = TRUE;
+
+  if (layer->text->outline != GIMP_TEXT_OUTLINE_NONE)
+    return FALSE;
+
+  pango_layout = gimp_text_layout_get_pango_layout (layout);
+  attrs        = pango_layout_get_attributes (pango_layout);
+
+  if (! attrs)
+    return TRUE;
+
+  iter = pango_attr_list_get_iterator (attrs);
+
+  do
+    {
+      GSList *list = pango_attr_iterator_get_attrs (iter);
+      GSList *l;
+
+      for (l = list; l && solid; l = l->next)
+        {
+          PangoAttribute *attr = l->data;
+
+          switch ((gint) attr->klass->type)
+            {
+            case PANGO_ATTR_FOREGROUND:
+              {
+                PangoColor color = ((PangoAttrColor *) attr)->color;
+
+                if (! have_color)
+                  {
+                    first      = color;
+                    have_color = TRUE;
+                  }
+                else if (color.red   != first.red   ||
+                         color.green != first.green ||
+                         color.blue  != first.blue)
+                  {
+                    solid = FALSE;
+                  }
+              }
+              break;
+
+            case PANGO_ATTR_BACKGROUND:
+            case PANGO_ATTR_UNDERLINE_COLOR:
+            case PANGO_ATTR_STRIKETHROUGH_COLOR:
+            case PANGO_ATTR_OVERLINE_COLOR:
+            case PANGO_ATTR_FOREGROUND_ALPHA:
+            case PANGO_ATTR_BACKGROUND_ALPHA:
+              solid = FALSE;
+              break;
+
+            default:
+              break;
+            }
+        }
+
+      g_slist_free_full (list, (GDestroyNotify) pango_attribute_destroy);
+    }
+  while (solid && pango_attr_iterator_next (iter));
+
+  pango_attr_iterator_destroy (iter);
+
+  return solid;
+}
+
+/*  INTERFACES §11, D16: solid-color text on a CMYK layer is rendered as
+ *  glyph coverage only (CAIRO_FORMAT_A8) and filled with the text color
+ *  converted once to the layer's native CMYK, so K-only text stays
+ *  K-only.  Returns FALSE (nothing rendered) if the fast path does not
+ *  apply; the caller then renders through RGB.
+ */
+static gboolean
+gimp_text_layer_render_layout_cmyk (GimpTextLayer  *layer,
+                                    GimpTextLayout *layout)
+{
+  GimpDrawable       *drawable = GIMP_DRAWABLE (layer);
+  GimpItem           *item     = GIMP_ITEM (layer);
+  GeglBuffer         *dest     = gimp_drawable_get_buffer (drawable);
+  const Babl         *format;
+  GeglBuffer         *coverage;
+  GeglBufferIterator *iter;
+  cairo_surface_t    *surface;
+  cairo_t            *cr;
+  gdouble             cmyka[5];
+  gfloat              ink[5];
+  gint                width;
+  gint                height;
+
+  if (! gimp_drawable_is_cmyk (drawable) ||
+      ! gimp_text_layer_is_solid_color (layer, layout))
+    return FALSE;
+
+  width  = gimp_item_get_width  (item);
+  height = gimp_item_get_height (item);
+
+  surface = cairo_image_surface_create (CAIRO_FORMAT_A8, width, height);
+
+  if (cairo_surface_status (surface) != CAIRO_STATUS_SUCCESS)
+    {
+      cairo_surface_destroy (surface);
+      return FALSE;
+    }
+
+  cr = cairo_create (surface);
+  gimp_text_layout_render (layout, cr, layer->text->base_dir, FALSE);
+  cairo_destroy (cr);
+
+  cairo_surface_flush (surface);
+
+  /*  the text color in the layer's own CMYK space: exact for a color
+   *  picked from / created for this image
+   */
+  format = babl_format_with_space ("CMYKA double",
+                                   gegl_buffer_get_format (dest));
+  gegl_color_get_pixel (layer->text->color, format, cmyka);
+
+  for (gint c = 0; c < 5; c++)
+    ink[c] = cmyka[c];
+
+  coverage = gegl_buffer_linear_new_from_data (
+    cairo_image_surface_get_data (surface),
+    babl_format ("Y u8"),
+    GEGL_RECTANGLE (0, 0, width, height),
+    cairo_image_surface_get_stride (surface),
+    NULL, NULL);
+
+  iter = gegl_buffer_iterator_new (dest, GEGL_RECTANGLE (0, 0, width, height),
+                                   0,
+                                   babl_format_with_space ("CMYKA float",
+                                                           gegl_buffer_get_format (dest)),
+                                   GEGL_ACCESS_WRITE, GEGL_ABYSS_NONE, 2);
+
+  gegl_buffer_iterator_add (iter, coverage,
+                            GEGL_RECTANGLE (0, 0, width, height), 0,
+                            babl_format ("Y float"),
+                            GEGL_ACCESS_READ, GEGL_ABYSS_NONE);
+
+  while (gegl_buffer_iterator_next (iter))
+    {
+      gfloat       *d = iter->items[0].data;
+      const gfloat *a = iter->items[1].data;
+      gint          n = iter->length;
+
+      while (n--)
+        {
+          d[0] = ink[0];
+          d[1] = ink[1];
+          d[2] = ink[2];
+          d[3] = ink[3];
+          d[4] = ink[4] * *a;
+
+          d += 5;
+          a += 1;
+        }
+    }
+
+  g_object_unref (coverage);
+  cairo_surface_destroy (surface);
+
+  gimp_drawable_update (drawable, 0, 0, width, height);
+
+  return TRUE;
+}
+
 static void
 gimp_text_layer_render_layout (GimpTextLayer  *layer,
                                GimpTextLayout *layout)
@@ -1169,6 +1348,14 @@ gimp_text_layer_render_layout (GimpTextLayer  *layer,
   cairo_status_t      status;
 
   g_return_if_fail (gimp_drawable_has_alpha (drawable));
+
+  /*  CMYK: native K-preserving path for single-color text; multi-color
+   *  and outlined text falls through to the RGB rendering below and is
+   *  converted to CMYK by babl when copied into the layer (documented:
+   *  black then becomes a rich black).
+   */
+  if (gimp_text_layer_render_layout_cmyk (layer, layout))
+    return;
 
   width  = gimp_item_get_width  (item);
   height = gimp_item_get_height (item);
