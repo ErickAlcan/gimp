@@ -66,7 +66,7 @@ other workstream can start the moment this merges. No UI, no PDB, no compositing
    write/read with explicit formats, input-only derivative, header variant, precision knob);
    all skeleton files (one skipped test / passing stub each) registered (C files in
    `app_tests`; `test-cmyk-nosupport` as its own executable; Python files in `tests`; append
-   `file-tiff/file-tiff:file-jpeg/file-jpeg:file-psd/file-psd` once to `test_env`'s
+   `file-tiff:file-jpeg:file-psd` once to `test_env`'s
    `GIMP_TESTING_PLUG_INS`); F1–F8 and F12 in `test-cmyk-foundation.c` (F3: determinism,
    header bytes, bidirectional only).
 10. Tier A audits on owned files; record results in Status.

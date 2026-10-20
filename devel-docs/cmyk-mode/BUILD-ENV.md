@@ -50,7 +50,7 @@ network access (ignore it). The suites that matter here:
   for end-to-end tests (create CMYK image → paint → save XCF → reload → export TIFF/PSD →
   verify pixels). See `app/tests/test-save-and-export.py` as the template and
   `app/tests/meson.build` for how a test is declared (`tests = [{'name': ...}]`; add
-  needed plug-ins to `GIMP_TESTING_PLUG_INS`, e.g. `file-tiff/file-tiff`, `file-psd/file-psd`).
+  needed plug-ins to `GIMP_TESTING_PLUG_INS`, e.g. `file-tiff`, `file-jpeg`, `file-psd` (tools/in-build-gimp.py maps a plain name to plug-ins/<name>/<name>)).
 
 Run one suite: `meson test -C _build --no-rebuild --print-errorlogs core` (or `xcf`, or
 `save-and-export`). Logs: `_build/meson-logs/testlog.txt`.
@@ -64,7 +64,7 @@ line for `save-and-export` from `_build/meson-logs/testlog.txt`, which looks lik
 GIMP_TESTING_ENVIRON_DIRS=/root/gimp/_build/data/environ/ GIMP_TESTING_ABS_TOP_BUILDDIR=/root/gimp/_build \
 GIMP3_SYSCONFDIR=/root/gimp/etc GIMP_GLOBAL_BUILD_ROOT=/root/gimp/_build GIMP_PYTHON_WITH_GI=/opt/py312-shim/python \
 GIMP_GLOBAL_SOURCE_ROOT=/root/gimp GIMP_SELF_IN_BUILD=/root/gimp/_build/app/gimp-console-3.3 \
-GIMP_TESTING_PLUG_INS=python/python-eval/:common/file-png:file-tiff/file-tiff:file-psd/file-psd \
+GIMP_TESTING_PLUG_INS=python/python-eval/:common/file-png:file-tiff:file-jpeg:file-psd \
 GI_TYPELIB_PATH=/root/gimp/_build/libgimp:/opt/gimp-deps/lib/x86_64-linux-gnu/girepository-1.0 \
 GIMP3_LOCALEDIR=/root/gimp/_build/po-plug-ins \
 LD_LIBRARY_PATH=/root/gimp/_build/libgimpwidgets:/root/gimp/_build/libgimpthumb:/root/gimp/_build/libgimpmodule:/root/gimp/_build/libgimpmath:/root/gimp/_build/libgimpconfig:/root/gimp/_build/libgimpcolor:/root/gimp/_build/libgimpbase:/root/gimp/_build/libgimp:/opt/gimp-deps/lib/x86_64-linux-gnu \
@@ -90,3 +90,21 @@ repository prefer generating). Document the choice in TESTING.md.
 Profiles available on this box for local testing (not for committing):
 `/usr/share/color/icc/ghostscript/default_cmyk.icc`, `/usr/share/color/icc/ghostscript/ps_cmyk.icc`,
 `/usr/share/texlive/texmf-dist/tex/generic/colorprofiles/FOGRA39L_coated.icc` (FOGRA39, ECI — free to redistribute per ECI terms; check before vendoring).
+
+## Parallel workstreams (worktrees)
+
+Each workstream agent works in its own git worktree `/root/wt/<ws>` on branch `ws/<ws>`, branched from
+`cmyk-mode` after 01a. Build there with its own build dir:
+
+```sh
+source /root/gimp-env.sh          # also sets CC="ccache gcc" — the cache is warm, builds are fast
+cd /root/wt/<ws>
+meson setup _build --prefix=/opt/gimp -Dbuildtype=debugoptimized -Dvector-icons=false \
+  -Djavascript=disabled -Dlua=false -Dvala=disabled -Dgi-docgen=disabled -Dheadless-tests=enabled
+ninja -C _build -j1               # the box has 2 cores shared by all agents: ALWAYS -j1
+meson test -C _build --no-rebuild --print-errorlogs --num-processes 1
+```
+
+The gimp-data submodule is shared; run `git submodule update --init` in the worktree if `gimp-data/`
+is empty (it points at the GitHub mirror via the insteadOf config in the main repo; if the clone
+fails, `cp -a /root/gimp/gimp-data .`).
