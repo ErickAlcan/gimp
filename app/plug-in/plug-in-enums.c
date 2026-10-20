@@ -20,6 +20,8 @@ gimp_plug_in_image_type_get_type (void)
     { GIMP_PLUG_IN_RGBA_IMAGE, "GIMP_PLUG_IN_RGBA_IMAGE", "rgba-image" },
     { GIMP_PLUG_IN_GRAYA_IMAGE, "GIMP_PLUG_IN_GRAYA_IMAGE", "graya-image" },
     { GIMP_PLUG_IN_INDEXEDA_IMAGE, "GIMP_PLUG_IN_INDEXEDA_IMAGE", "indexeda-image" },
+    { GIMP_PLUG_IN_CMYK_IMAGE, "GIMP_PLUG_IN_CMYK_IMAGE", "cmyk-image" },
+    { GIMP_PLUG_IN_CMYKA_IMAGE, "GIMP_PLUG_IN_CMYKA_IMAGE", "cmyka-image" },
     { 0, NULL, NULL }
   };
 
@@ -31,6 +33,8 @@ gimp_plug_in_image_type_get_type (void)
     { GIMP_PLUG_IN_RGBA_IMAGE, "GIMP_PLUG_IN_RGBA_IMAGE", NULL },
     { GIMP_PLUG_IN_GRAYA_IMAGE, "GIMP_PLUG_IN_GRAYA_IMAGE", NULL },
     { GIMP_PLUG_IN_INDEXEDA_IMAGE, "GIMP_PLUG_IN_INDEXEDA_IMAGE", NULL },
+    { GIMP_PLUG_IN_CMYK_IMAGE, "GIMP_PLUG_IN_CMYK_IMAGE", NULL },
+    { GIMP_PLUG_IN_CMYKA_IMAGE, "GIMP_PLUG_IN_CMYKA_IMAGE", NULL },
     { 0, NULL, NULL }
   };
 

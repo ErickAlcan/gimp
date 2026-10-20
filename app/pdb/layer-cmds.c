@@ -89,7 +89,7 @@ layer_new_invoker (GimpProcedure         *procedure,
     {
       GimpImageBaseType  base_type = GIMP_RGB;
       gboolean           has_alpha = FALSE;
-      const Babl        *format;
+      const Babl        *format    = NULL;
 
       if (mode == GIMP_LAYER_MODE_OVERLAY_LEGACY)
         mode = GIMP_LAYER_MODE_SOFTLIGHT_LEGACY;
@@ -125,9 +125,23 @@ layer_new_invoker (GimpProcedure         *procedure,
           base_type = GIMP_INDEXED;
           has_alpha = TRUE;
           break;
+
+        case GIMP_CMYK_IMAGE:
+          base_type = GIMP_CMYK;
+          has_alpha = FALSE;
+          break;
+
+        case GIMP_CMYKA_IMAGE:
+          base_type = GIMP_CMYK;
+          has_alpha = TRUE;
+          break;
         }
 
-      if (base_type == GIMP_GRAY)
+      if (! gimp_pdb_image_type_is_valid (image, type, error))
+        {
+          success = FALSE;
+        }
+      else if (base_type == GIMP_GRAY)
         {
           /* do not use gimp_image_get_layer_format() because it might
            * be the floating selection of a channel or mask, we will
@@ -143,11 +157,14 @@ layer_new_invoker (GimpProcedure         *procedure,
           format = gimp_image_get_layer_format (image, has_alpha);
         }
 
-      layer = gimp_layer_new (image, width, height,
-                              format, name, opacity / 100.0, mode);
+      if (success)
+        {
+          layer = gimp_layer_new (image, width, height,
+                                  format, name, opacity / 100.0, mode);
 
-      if (! layer)
-        success = FALSE;
+          if (! layer)
+            success = FALSE;
+        }
     }
 
   return_vals = gimp_procedure_get_return_values (procedure, success,
@@ -1225,7 +1242,9 @@ register_layer_procs (GimpPDB *pdb)
                                   "\n"
                                   "The new layer still needs to be added to the image as this is not automatic. Add the new layer with the [method@Image.insert_layer] method.\n"
                                   "\n"
-                                  "Other attributes such as layer mask and offsets should be set with explicit procedure calls.",
+                                  "Other attributes such as layer mask and offsets should be set with explicit procedure calls.\n"
+                                  "\n"
+                                  "CMYK layer types ([enum@Gimp.ImageType.CMYK_IMAGE], [enum@Gimp.ImageType.CMYKA_IMAGE]) can only be used for CMYK images, and CMYK images only accept CMYK layer types (and grayscale types, for floating selections of channels). Legacy layer modes are replaced by their non-legacy equivalent for layers of CMYK images.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -2117,7 +2136,9 @@ register_layer_procs (GimpPDB *pdb)
                                "gimp-layer-set-mode");
   gimp_procedure_set_static_help (procedure,
                                   "Set the combination mode of the specified layer.",
-                                  "This procedure sets the specified layer's combination mode.",
+                                  "This procedure sets the specified layer's combination mode.\n"
+                                  "\n"
+                                  "Layers of CMYK images do not support legacy layer modes: a legacy mode set on such a layer is replaced by its non-legacy equivalent (e.g. [enum@Gimp.LayerMode.MULTIPLY_LEGACY] becomes [enum@Gimp.LayerMode.MULTIPLY]).",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",

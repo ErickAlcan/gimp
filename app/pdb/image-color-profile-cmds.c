@@ -478,6 +478,10 @@ image_convert_color_profile_invoker (GimpProcedure         *procedure,
                                                              g_bytes_get_size (color_profile),
                                                              error);
         }
+      else if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          profile = gimp_get_default_cmyk_profile (gimp, NULL, NULL);
+        }
       else
         {
           profile = gimp_image_get_builtin_color_profile (image);
@@ -588,7 +592,7 @@ register_image_color_profile_procs (GimpPDB *pdb)
                                "gimp-image-get-effective-color-profile");
   gimp_procedure_set_static_help (procedure,
                                   "Returns the color profile that is used for the image",
-                                  "This procedure returns the color profile that is actually used for this image, which is the profile returned by 'gimp-image-get-color-profile' if the image has a profile assigned, or a generated default RGB or grayscale profile, according to the image's type.",
+                                  "This procedure returns the color profile that is actually used for this image, which is the profile returned by 'gimp-image-get-color-profile' if the image has a profile assigned, or a generated default RGB or grayscale profile, according to the image's type. CMYK images always have a CMYK profile assigned.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",
@@ -617,7 +621,9 @@ register_image_color_profile_procs (GimpPDB *pdb)
                                "gimp-image-set-color-profile");
   gimp_procedure_set_static_help (procedure,
                                   "Sets the image's color profile",
-                                  "This procedure sets the image's color profile, or unsets it if NULL is passed as 'color_profile'. This procedure does no color conversion. However, it will change the pixel format of all layers to contain the babl space matching the profile. You must call this procedure before adding layers to the image.",
+                                  "This procedure sets the image's color profile, or unsets it if NULL is passed as 'color_profile'. This procedure does no color conversion. However, it will change the pixel format of all layers to contain the babl space matching the profile. You must call this procedure before adding layers to the image.\n"
+                                  "\n"
+                                  "For a CMYK image, the profile must be a CMYK profile usable in both directions (with output tables), and passing NULL attaches the default CMYK profile instead of unsetting it.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",
@@ -880,7 +886,7 @@ register_image_color_profile_procs (GimpPDB *pdb)
                                "gimp-image-convert-color-profile");
   gimp_procedure_set_static_help (procedure,
                                   "Convert the image's layers to a color profile",
-                                  "This procedure converts from the image's color profile (or the built-in RGB or grayscale profile if none is set) to the given color profile. Only RGB and grayscale color profiles are accepted, according to the image's type.",
+                                  "This procedure converts from the image's color profile (or the built-in RGB or grayscale profile if none is set) to the given color profile. Only RGB, grayscale and CMYK color profiles are accepted, according to the image's type. If 'color_profile' is NULL, RGB and grayscale images are converted to the built-in profile, CMYK images to the default CMYK profile. Use [method@Gimp.Image.convert_cmyk] to change the image's type to CMYK.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",
@@ -922,7 +928,7 @@ register_image_color_profile_procs (GimpPDB *pdb)
                                "gimp-image-convert-color-profile-from-file");
   gimp_procedure_set_static_help (procedure,
                                   "Convert the image's layers to a color profile",
-                                  "This procedure converts from the image's color profile (or the default RGB or grayscale profile if none is set) to an ICC profile specified by 'file'. Only RGB and grayscale color profiles are accepted, according to the image's type.",
+                                  "This procedure converts from the image's color profile (or the default RGB or grayscale profile if none is set) to an ICC profile specified by 'file'. Only RGB, grayscale and CMYK color profiles are accepted, according to the image's type.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",

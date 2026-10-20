@@ -59,6 +59,12 @@
  * Other attributes such as layer mask and offsets should be set with
  * explicit procedure calls.
  *
+ * CMYK layer types ([enum@Gimp.ImageType.CMYK_IMAGE],
+ * [enum@Gimp.ImageType.CMYKA_IMAGE]) can only be used for CMYK images,
+ * and CMYK images only accept CMYK layer types (and grayscale types,
+ * for floating selections of channels). Legacy layer modes are
+ * replaced by their non-legacy equivalent for layers of CMYK images.
+ *
  * Returns: (transfer none):
  *          The newly created layer. The object belongs to libgimp and you should not free it.
  **/
@@ -1136,6 +1142,11 @@ gimp_layer_get_mode (GimpLayer *layer)
  * Set the combination mode of the specified layer.
  *
  * This procedure sets the specified layer's combination mode.
+ *
+ * Layers of CMYK images do not support legacy layer modes: a legacy
+ * mode set on such a layer is replaced by its non-legacy equivalent
+ * (e.g. [enum@Gimp.LayerMode.MULTIPLY_LEGACY] becomes
+ * [enum@Gimp.LayerMode.MULTIPLY]).
  *
  * Returns: TRUE on success.
  **/

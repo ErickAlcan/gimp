@@ -47,6 +47,7 @@ gboolean                 gimp_drawable_has_alpha             (GimpDrawable      
 gboolean                 gimp_drawable_is_rgb                (GimpDrawable               *drawable);
 gboolean                 gimp_drawable_is_gray               (GimpDrawable               *drawable);
 gboolean                 gimp_drawable_is_indexed            (GimpDrawable               *drawable);
+gboolean                 gimp_drawable_is_cmyk               (GimpDrawable               *drawable);
 gint                     gimp_drawable_get_bpp               (GimpDrawable               *drawable);
 gint                     gimp_drawable_get_width             (GimpDrawable               *drawable);
 gint                     gimp_drawable_get_height            (GimpDrawable               *drawable);

@@ -152,10 +152,16 @@ image_new_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      image = gimp_create_image (gimp, width, height, type,
-                                 GIMP_PRECISION_U8_NON_LINEAR, FALSE);
+      if (gimp_pdb_base_type_is_valid (type, GIMP_PRECISION_U8_NON_LINEAR,
+                                       error))
+        {
+          image = gimp_create_image (gimp, width, height, type,
+                                     GIMP_PRECISION_U8_NON_LINEAR, FALSE);
 
-      if (! image)
+          if (! image)
+            success = FALSE;
+        }
+      else
         success = FALSE;
     }
 
@@ -191,7 +197,7 @@ image_new_with_precision_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (gimp_babl_is_valid (type, precision))
+      if (gimp_pdb_base_type_is_valid (type, precision, error))
         {
           image = gimp_create_image (gimp, width, height, type,
                                      precision, FALSE);
@@ -2225,12 +2231,7 @@ image_get_component_active_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (component == GIMP_CHANNEL_GRAY)
-        success = gimp_pdb_image_is_base_type (image, GIMP_GRAY, error);
-      else if (component == GIMP_CHANNEL_INDEXED)
-        success = gimp_pdb_image_is_base_type (image, GIMP_INDEXED, error);
-      else
-        success = gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+      success = gimp_pdb_image_has_component (image, component, error);
 
       if (success)
         active = gimp_image_get_component_active (image, component);
@@ -2264,12 +2265,7 @@ image_set_component_active_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (component == GIMP_CHANNEL_GRAY)
-        success = gimp_pdb_image_is_base_type (image, GIMP_GRAY, error);
-      else if (component == GIMP_CHANNEL_INDEXED)
-        success = gimp_pdb_image_is_base_type (image, GIMP_INDEXED, error);
-      else
-        success = gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+      success = gimp_pdb_image_has_component (image, component, error);
 
       if (success)
         gimp_image_set_component_active (image, component, active);
@@ -2298,12 +2294,7 @@ image_get_component_visible_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (component == GIMP_CHANNEL_GRAY)
-        success = gimp_pdb_image_is_base_type (image, GIMP_GRAY, error);
-      else if (component == GIMP_CHANNEL_INDEXED)
-        success = gimp_pdb_image_is_base_type (image, GIMP_INDEXED, error);
-      else
-        success = gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+      success = gimp_pdb_image_has_component (image, component, error);
 
       if (success)
         visible = gimp_image_get_component_visible (image, component);
@@ -2337,12 +2328,7 @@ image_set_component_visible_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (component == GIMP_CHANNEL_GRAY)
-        success = gimp_pdb_image_is_base_type (image, GIMP_GRAY, error);
-      else if (component == GIMP_CHANNEL_INDEXED)
-        success = gimp_pdb_image_is_base_type (image, GIMP_INDEXED, error);
-      else
-        success = gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+      success = gimp_pdb_image_has_component (image, component, error);
 
       if (success)
         gimp_image_set_component_visible (image, component, visible);
@@ -2963,10 +2949,24 @@ image_detach_parasite_invoker (GimpProcedure         *procedure,
 
   if (success)
     {
-      if (name && strlen (name) > 0)
-        gimp_image_parasite_detach (image, name, TRUE);
+      if (! name || strlen (name) == 0)
+        {
+          success = FALSE;
+        }
+      else if (gimp_image_get_base_type (image) == GIMP_CMYK &&
+               strcmp (name, GIMP_ICC_PROFILE_PARASITE_NAME) == 0)
+        {
+          g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                       _("The color profile of the CMYK image '%s' (%d) cannot "
+                         "be detached, set another CMYK profile instead"),
+                       gimp_image_get_display_name (image),
+                       gimp_image_get_id (image));
+          success = FALSE;
+        }
       else
-        success = FALSE;
+        {
+          gimp_image_parasite_detach (image, name, TRUE);
+        }
     }
 
   return gimp_procedure_get_return_values (procedure, success,
@@ -3151,7 +3151,9 @@ register_image_procs (GimpPDB *pdb)
                                   "Creates a new image with the specified width, height, and type.",
                                   "Creates a new image, undisplayed, with the specified extents and type. A layer should be created and added before this image is displayed, or subsequent calls to [ctor@Gimp.Display.new] with this image as an argument will fail. Layers can be created using the [ctor@Gimp.Layer.new] command. They can be added to an image using the [method@Gimp.Image.insert_layer] command.\n"
                                   "\n"
-                                  "If your image's type is INDEXED, a palette must also be set with [method@Gimp.Image.set_palette]. An indexed image without a palette will output unexpected colors.",
+                                  "If your image's type is INDEXED, a palette must also be set with [method@Gimp.Image.set_palette]. An indexed image without a palette will output unexpected colors.\n"
+                                  "\n"
+                                  "If your image's type is CMYK, the default CMYK color profile is attached to the new image. To use another CMYK profile, call [method@Gimp.Image.set_color_profile] right after creating the image, before adding layers. Creating a CMYK image fails if GIMP was built without CMYK support.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -3193,7 +3195,7 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-new-with-precision");
   gimp_procedure_set_static_help (procedure,
                                   "Creates a new image with the specified width, height, type and precision.",
-                                  "Creates a new image, undisplayed with the specified extents, type and precision. Indexed images can only be created at [enum@Gimp.Precision.U8_NON_LINEAR] precision. See [ctor@Gimp.Image.new] for further details.",
+                                  "Creates a new image, undisplayed with the specified extents, type and precision. Indexed images can only be created at [enum@Gimp.Precision.U8_NON_LINEAR] precision. CMYK images can only be created at non-linear precisions (e.g. [enum@Gimp.Precision.U16_NON_LINEAR]). See [ctor@Gimp.Image.new] for further details.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",
@@ -4769,7 +4771,9 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-thumbnail");
   gimp_procedure_set_static_help (procedure,
                                   "Get a thumbnail of an image.",
-                                  "This function gets data from which a thumbnail of an image preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bits per pixel in the image.",
+                                  "This function gets data from which a thumbnail of an image preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bits per pixel in the image.\n"
+                                  "\n"
+                                  "Thumbnails of CMYK images are sRGB: RGB[A] pixels, bpp 3 or 4.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Andy Thomas",
@@ -5061,7 +5065,7 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-get-component-active");
   gimp_procedure_set_static_help (procedure,
                                   "Returns if the specified image's image component is active.",
-                                  "This procedure returns if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image) is active or inactive -- whether or not it can be modified. If the specified component is not valid for the image type, an error is returned.",
+                                  "This procedure returns if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan, Magenta, Yellow, Black channels in a CMYK image) is active or inactive -- whether or not it can be modified. If the specified component is not valid for the image type, an error is returned.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -5097,7 +5101,7 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-set-component-active");
   gimp_procedure_set_static_help (procedure,
                                   "Sets if the specified image's image component is active.",
-                                  "This procedure sets if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image) is active or inactive -- whether or not it can be modified. If the specified component is not valid for the image type, an error is returned.",
+                                  "This procedure sets if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan, Magenta, Yellow, Black channels in a CMYK image) is active or inactive -- whether or not it can be modified. If the specified component is not valid for the image type, an error is returned.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -5133,7 +5137,7 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-get-component-visible");
   gimp_procedure_set_static_help (procedure,
                                   "Returns if the specified image's image component is visible.",
-                                  "This procedure returns if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image) is visible or invisible -- whether or not it can be seen. If the specified component is not valid for the image type, an error is returned.",
+                                  "This procedure returns if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan, Magenta, Yellow, Black channels in a CMYK image) is visible or invisible -- whether or not it can be seen. If the specified component is not valid for the image type, an error is returned.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -5169,7 +5173,7 @@ register_image_procs (GimpPDB *pdb)
                                "gimp-image-set-component-visible");
   gimp_procedure_set_static_help (procedure,
                                   "Sets if the specified image's image component is visible.",
-                                  "This procedure sets if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image) is visible or invisible -- whether or not it can be seen. If the specified component is not valid for the image type, an error is returned.",
+                                  "This procedure sets if the specified image's image component (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan, Magenta, Yellow, Black channels in a CMYK image) is visible or invisible -- whether or not it can be seen. If the specified component is not valid for the image type, an error is returned.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -5814,7 +5818,9 @@ register_image_procs (GimpPDB *pdb)
                                   "Removes a parasite from an image.",
                                   "This procedure detaches a parasite from an image.\n"
                                   "\n"
-                                  "It will return %FALSE if @name is invalid (%NULL or empty string) and %TRUE otherwise (even if there was no parasite removed, because no parasite was named like this).",
+                                  "It will return %FALSE if @name is invalid (%NULL or empty string) and %TRUE otherwise (even if there was no parasite removed, because no parasite was named like this).\n"
+                                  "\n"
+                                  "The \"icc-profile\" parasite of a CMYK image cannot be detached: a CMYK image always has a color profile. Use [method@Gimp.Image.set_color_profile] to change it instead.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Jay Cox",

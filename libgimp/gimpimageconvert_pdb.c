@@ -30,9 +30,9 @@
 /**
  * SECTION: gimpimageconvert
  * @title: gimpimageconvert
- * @short_description: Conversions between RGB, indexed, and grayscale modes.
+ * @short_description: Conversions between RGB, indexed, grayscale and CMYK modes.
  *
- * Conversions between RGB, indexed, and grayscale modes.
+ * Conversions between RGB, indexed, grayscale and CMYK modes.
  **/
 
 
@@ -43,9 +43,11 @@
  * Convert specified image to RGB color
  *
  * This procedure converts the specified image to RGB color. This
- * process requires an image in Grayscale or Indexed color mode. No
- * image content is lost in this process aside from the colormap for an
- * indexed image.
+ * process requires an image in Grayscale, Indexed or CMYK color mode.
+ * No image content is lost in this process aside from the colormap for
+ * an indexed image. A CMYK image is converted with its color profile
+ * to the built-in sRGB profile, using the perceptual rendering intent
+ * with black point compensation.
  *
  * Returns: TRUE on success.
  **/
@@ -79,7 +81,7 @@ gimp_image_convert_rgb (GimpImage *image)
  * Convert specified image to grayscale
  *
  * This procedure converts the specified image to grayscale. This
- * process requires an image in RGB or Indexed color mode.
+ * process requires an image in RGB, Indexed or CMYK color mode.
  *
  * Returns: TRUE on success.
  **/
@@ -119,18 +121,18 @@ gimp_image_convert_grayscale (GimpImage *image)
  * Convert specified image to and Indexed image
  *
  * This procedure converts the specified image to 'indexed' color. This
- * process requires an image in RGB or Grayscale mode. The
- * 'palette_type' specifies what kind of palette to use, A type of '0'
- * means to use an optimal palette of 'num_cols' generated from the
- * colors in the image. A type of '1' means to re-use the previous
- * palette (not currently implemented). A type of '2' means to use the
- * so-called WWW-optimized palette. Type '3' means to use only black
- * and white colors. A type of '4' means to use a palette from the gimp
- * palettes directories. The 'dither type' specifies what kind of
- * dithering to use. '0' means no dithering, '1' means standard
- * Floyd-Steinberg error diffusion, '2' means Floyd-Steinberg error
- * diffusion with reduced bleeding, '3' means dithering based on pixel
- * location ('Fixed' dithering).
+ * process requires an image in RGB or Grayscale mode; CMYK images must
+ * be converted to RGB first. The 'palette_type' specifies what kind of
+ * palette to use, A type of '0' means to use an optimal palette of
+ * 'num_cols' generated from the colors in the image. A type of '1'
+ * means to re-use the previous palette (not currently implemented). A
+ * type of '2' means to use the so-called WWW-optimized palette. Type
+ * '3' means to use only black and white colors. A type of '4' means to
+ * use a palette from the gimp palettes directories. The 'dither type'
+ * specifies what kind of dithering to use. '0' means no dithering, '1'
+ * means standard Floyd-Steinberg error diffusion, '2' means
+ * Floyd-Steinberg error diffusion with reduced bleeding, '3' means
+ * dithering based on pixel location ('Fixed' dithering).
  *
  * Returns: TRUE on success.
  **/
@@ -159,6 +161,64 @@ gimp_image_convert_indexed (GimpImage              *image,
 
   return_vals = _gimp_pdb_run_procedure_array (gimp_get_pdb (),
                                                "gimp-image-convert-indexed",
+                                               args);
+  gimp_value_array_unref (args);
+
+  success = GIMP_VALUES_GET_ENUM (return_vals, 0) == GIMP_PDB_SUCCESS;
+
+  gimp_value_array_unref (return_vals);
+
+  return success;
+}
+
+/**
+ * _gimp_image_convert_cmyk:
+ * @image: The image.
+ * @color_profile: (nullable): The serialized CMYK color profile, or %NULL for the default CMYK profile.
+ * @intent: Rendering intent.
+ * @bpc: Black point compensation.
+ *
+ * Convert specified image to CMYK color
+ *
+ * This procedure converts the specified image to CMYK color, using
+ * @color_profile as the CMYK profile of the result, or the default
+ * CMYK profile (the color management preferences' CMYK profile, else
+ * the built-in one) if @color_profile is %NULL. The profile must be a
+ * CMYK profile which can be used in both directions (it must contain
+ * output tables). This process requires an image in RGB, Grayscale or
+ * Indexed color mode, and GIMP built with CMYK support.
+ *
+ * @intent and @bpc are used for the color conversion of the image's
+ * pixels. The image's precision is changed to the corresponding
+ * non-linear precision if needed, as CMYK images are always
+ * non-linear.
+ *
+ * Legacy layer modes are replaced by their non-legacy equivalent,
+ * since CMYK images do not support legacy layer modes.
+ *
+ * Returns: TRUE on success.
+ *
+ * Since: 3.4
+ **/
+gboolean
+_gimp_image_convert_cmyk (GimpImage                *image,
+                          GBytes                   *color_profile,
+                          GimpColorRenderingIntent  intent,
+                          gboolean                  bpc)
+{
+  GimpValueArray *args;
+  GimpValueArray *return_vals;
+  gboolean success = TRUE;
+
+  args = gimp_value_array_new_from_types (NULL,
+                                          GIMP_TYPE_IMAGE, image,
+                                          G_TYPE_BYTES, color_profile,
+                                          GIMP_TYPE_COLOR_RENDERING_INTENT, intent,
+                                          G_TYPE_BOOLEAN, bpc,
+                                          G_TYPE_NONE);
+
+  return_vals = _gimp_pdb_run_procedure_array (gimp_get_pdb (),
+                                               "gimp-image-convert-cmyk",
                                                args);
   gimp_value_array_unref (args);
 
@@ -220,7 +280,8 @@ gimp_image_convert_set_dither_matrix (gint    width,
  *
  * This procedure converts the image to the specified precision. Note
  * that indexed images cannot be converted and are always in
- * GIMP_PRECISION_U8.
+ * GIMP_PRECISION_U8, and that CMYK images only accept non-linear
+ * precisions.
  *
  * Returns: TRUE on success.
  *
