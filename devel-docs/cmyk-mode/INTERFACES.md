@@ -271,6 +271,15 @@ returns FALSE + `GIMP_ERROR_FAILED "not implemented"` when CMYK is involved, els
 6. `gimp_image_fix_layer_format_spaces()` as a safety net; group end; `mode_changed`.
 Undo pops in reverse; the transient states are absorbed by §4's `get_layer_space()` rule.
 
+**[03 deviation notes]** Step 6 uses a private copy of `gimp_image_fix_layer_format_spaces()`
+(the original is `static` in 01b's `gimpimage-color-profile.c`). Step 1 uses the new
+`gboolean gimp_layer_map_legacy_mode (GimpLayer *layer, gboolean push_undo)` (gimplayer.h, also
+used by `gimp_layer_set_mode()` on CMYK images and by `gimp_item_convert()` into a CMYK image;
+04 may use it at XCF load); its mapping table is private until 02's
+`gimp_layer_mode_get_non_legacy()` is merged. Default targets with a NULL profile: to CMYK
+`gimp_get_default_cmyk_profile (gimp, <simulation profile if CMYK>, NULL)` (D3); CMYK → RGB/GRAY
+the color-config RGB/gray profile if usable, else the builtin.
+
 ---------------------------------------------------------------------------------------------
 ## 7. app/core/gimpdrawable.h (owner 01a)
 `gboolean gimp_drawable_is_cmyk (GimpDrawable *drawable);` — `get_component_format/index()`
