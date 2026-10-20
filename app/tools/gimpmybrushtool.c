@@ -32,6 +32,8 @@
 #include "display/gimpcanvasarc.h"
 
 #include "core/gimp.h"
+#include "core/gimpdrawable.h"
+#include "core/gimpimage.h"
 
 #include "widgets/gimphelp-ids.h"
 
@@ -46,6 +48,12 @@ G_DEFINE_TYPE (GimpMybrushTool, gimp_mybrush_tool, GIMP_TYPE_PAINT_TOOL)
 
 #define parent_class gimp_mybrush_tool_parent_class
 
+static void   gimp_mybrush_tool_button_press          (GimpTool            *tool,
+                                                       const GimpCoords    *coords,
+                                                       guint32              time,
+                                                       GdkModifierType      state,
+                                                       GimpButtonPressType  press_type,
+                                                       GimpDisplay         *display);
 static void   gimp_mybrush_tool_cursor_update         (GimpTool         *tool,
                                                        const GimpCoords *coords,
                                                        GdkModifierType   state,
@@ -89,6 +97,7 @@ gimp_mybrush_tool_class_init (GimpMybrushToolClass *klass)
   GimpToolClass      *tool_class       = GIMP_TOOL_CLASS (klass);
   GimpPaintToolClass *paint_tool_class = GIMP_PAINT_TOOL_CLASS (klass);
 
+  tool_class->button_press      = gimp_mybrush_tool_button_press;
   tool_class->cursor_update     = gimp_mybrush_tool_cursor_update;
   tool_class->options_notify    = gimp_mybrush_tool_options_notify;
 
@@ -112,6 +121,55 @@ gimp_mybrush_tool_init (GimpMybrushTool *mybrush_tool)
                                        GIMP_COLOR_PICK_TARGET_FOREGROUND);
 }
 
+/*  MyPaint brushes paint in RGB; they are unavailable on CMYK drawables
+ *  (INTERFACES §8.6, §11: the core refuses, the tool is insensitive).
+ */
+static gboolean
+gimp_mybrush_tool_has_cmyk_drawable (GimpDisplay *display)
+{
+  GimpImage *image;
+  GList     *drawables;
+  GList     *iter;
+  gboolean   cmyk = FALSE;
+
+  if (! display || ! GIMP_IS_DISPLAY (display))
+    return FALSE;
+
+  image = gimp_display_get_image (display);
+
+  if (! image)
+    return FALSE;
+
+  drawables = gimp_image_get_selected_drawables (image);
+
+  for (iter = drawables; iter && ! cmyk; iter = iter->next)
+    cmyk = gimp_drawable_is_cmyk (iter->data);
+
+  g_list_free (drawables);
+
+  return cmyk;
+}
+
+static void
+gimp_mybrush_tool_button_press (GimpTool            *tool,
+                                const GimpCoords    *coords,
+                                guint32              time,
+                                GdkModifierType      state,
+                                GimpButtonPressType  press_type,
+                                GimpDisplay         *display)
+{
+  if (! gimp_color_tool_is_enabled (GIMP_COLOR_TOOL (tool)) &&
+      gimp_mybrush_tool_has_cmyk_drawable (display))
+    {
+      gimp_tool_message_literal (tool, display,
+                                 _("MyPaint Brush does not support CMYK layers"));
+      return;
+    }
+
+  GIMP_TOOL_CLASS (parent_class)->button_press (tool, coords, time, state,
+                                                press_type, display);
+}
+
 static void
 gimp_mybrush_tool_cursor_update (GimpTool         *tool,
                                  const GimpCoords *coords,
@@ -132,6 +190,29 @@ gimp_mybrush_tool_cursor_update (GimpTool         *tool,
     {
       options->view_zoom     = 1.0f;
       options->view_rotation = 0.0f;
+    }
+
+  if (! gimp_color_tool_is_enabled (GIMP_COLOR_TOOL (tool)) &&
+      gimp_mybrush_tool_has_cmyk_drawable (display))
+    {
+      GimpCursorModifier modifier;
+      GimpCursorModifier toggle_modifier;
+
+      modifier        = tool->control->cursor_modifier;
+      toggle_modifier = tool->control->toggle_cursor_modifier;
+
+      gimp_tool_control_set_cursor_modifier        (tool->control,
+                                                    GIMP_CURSOR_MODIFIER_BAD);
+      gimp_tool_control_set_toggle_cursor_modifier (tool->control,
+                                                    GIMP_CURSOR_MODIFIER_BAD);
+
+      GIMP_TOOL_CLASS (parent_class)->cursor_update (tool, coords, state,
+                                                     display);
+
+      gimp_tool_control_set_cursor_modifier        (tool->control, modifier);
+      gimp_tool_control_set_toggle_cursor_modifier (tool->control,
+                                                    toggle_modifier);
+      return;
     }
 
   GIMP_TOOL_CLASS (parent_class)->cursor_update (tool, coords, state, display);
