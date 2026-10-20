@@ -159,6 +159,10 @@ gimp_channel_type_get_type (void)
     { GIMP_CHANNEL_GRAY, "GIMP_CHANNEL_GRAY", "gray" },
     { GIMP_CHANNEL_INDEXED, "GIMP_CHANNEL_INDEXED", "indexed" },
     { GIMP_CHANNEL_ALPHA, "GIMP_CHANNEL_ALPHA", "alpha" },
+    { GIMP_CHANNEL_CYAN, "GIMP_CHANNEL_CYAN", "cyan" },
+    { GIMP_CHANNEL_MAGENTA, "GIMP_CHANNEL_MAGENTA", "magenta" },
+    { GIMP_CHANNEL_YELLOW, "GIMP_CHANNEL_YELLOW", "yellow" },
+    { GIMP_CHANNEL_BLACK, "GIMP_CHANNEL_BLACK", "black" },
     { 0, NULL, NULL }
   };
 
@@ -170,6 +174,10 @@ gimp_channel_type_get_type (void)
     { GIMP_CHANNEL_GRAY, NC_("channel-type", "Gray"), NULL },
     { GIMP_CHANNEL_INDEXED, NC_("channel-type", "Indexed"), NULL },
     { GIMP_CHANNEL_ALPHA, NC_("channel-type", "Alpha"), NULL },
+    { GIMP_CHANNEL_CYAN, NC_("channel-type", "Cyan"), NULL },
+    { GIMP_CHANNEL_MAGENTA, NC_("channel-type", "Magenta"), NULL },
+    { GIMP_CHANNEL_YELLOW, NC_("channel-type", "Yellow"), NULL },
+    { GIMP_CHANNEL_BLACK, NC_("channel-type", "Black"), NULL },
     { 0, NULL, NULL }
   };
 
@@ -856,6 +864,7 @@ gimp_image_base_type_get_type (void)
     { GIMP_RGB, "GIMP_RGB", "rgb" },
     { GIMP_GRAY, "GIMP_GRAY", "gray" },
     { GIMP_INDEXED, "GIMP_INDEXED", "indexed" },
+    { GIMP_CMYK, "GIMP_CMYK", "cmyk" },
     { 0, NULL, NULL }
   };
 
@@ -864,6 +873,7 @@ gimp_image_base_type_get_type (void)
     { GIMP_RGB, NC_("image-base-type", "RGB color"), NULL },
     { GIMP_GRAY, NC_("image-base-type", "Grayscale"), NULL },
     { GIMP_INDEXED, NC_("image-base-type", "Indexed color"), NULL },
+    { GIMP_CMYK, NC_("image-base-type", "CMYK color"), NULL },
     { 0, NULL, NULL }
   };
 
@@ -891,6 +901,8 @@ gimp_image_type_get_type (void)
     { GIMP_GRAYA_IMAGE, "GIMP_GRAYA_IMAGE", "graya-image" },
     { GIMP_INDEXED_IMAGE, "GIMP_INDEXED_IMAGE", "indexed-image" },
     { GIMP_INDEXEDA_IMAGE, "GIMP_INDEXEDA_IMAGE", "indexeda-image" },
+    { GIMP_CMYK_IMAGE, "GIMP_CMYK_IMAGE", "cmyk-image" },
+    { GIMP_CMYKA_IMAGE, "GIMP_CMYKA_IMAGE", "cmyka-image" },
     { 0, NULL, NULL }
   };
 
@@ -902,6 +914,8 @@ gimp_image_type_get_type (void)
     { GIMP_GRAYA_IMAGE, NC_("image-type", "Grayscale-alpha"), NULL },
     { GIMP_INDEXED_IMAGE, NC_("image-type", "Indexed"), NULL },
     { GIMP_INDEXEDA_IMAGE, NC_("image-type", "Indexed-alpha"), NULL },
+    { GIMP_CMYK_IMAGE, NC_("image-type", "CMYK"), NULL },
+    { GIMP_CMYKA_IMAGE, NC_("image-type", "CMYK-alpha"), NULL },
     { 0, NULL, NULL }
   };
 
@@ -2032,6 +2046,7 @@ gimp_export_capabilities_get_type (void)
     { GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS, "GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS", "can-handle-layer-effects" },
     { GIMP_EXPORT_NEEDS_ALPHA, "GIMP_EXPORT_NEEDS_ALPHA", "needs-alpha" },
     { GIMP_EXPORT_NEEDS_CROP, "GIMP_EXPORT_NEEDS_CROP", "needs-crop" },
+    { GIMP_EXPORT_CAN_HANDLE_CMYK, "GIMP_EXPORT_CAN_HANDLE_CMYK", "can-handle-cmyk" },
     { 0, NULL, NULL }
   };
 
@@ -2048,6 +2063,7 @@ gimp_export_capabilities_get_type (void)
     { GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS, "GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS", NULL },
     { GIMP_EXPORT_NEEDS_ALPHA, "GIMP_EXPORT_NEEDS_ALPHA", NULL },
     { GIMP_EXPORT_NEEDS_CROP, "GIMP_EXPORT_NEEDS_CROP", NULL },
+    { GIMP_EXPORT_CAN_HANDLE_CMYK, "GIMP_EXPORT_CAN_HANDLE_CMYK", NULL },
     { 0, NULL, NULL }
   };
 
