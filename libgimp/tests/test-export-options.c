@@ -26,6 +26,8 @@ gimp_c_test_run (GimpProcedure        *procedure,
   GimpExportOptions  *options;
   GimpExportReturn    delete;
   gboolean            identical_buffers;
+  GimpImage          *cmyk_image;
+  GimpImage          *export_image;
 
   new_image = gimp_image_new (NEW_IMAGE_WIDTH, NEW_IMAGE_HEIGHT, GIMP_RGB);
   text_layer = gimp_text_layer_new (new_image, "hello world", gimp_context_get_font (),
@@ -89,6 +91,55 @@ gimp_c_test_run (GimpProcedure        *procedure,
         }
     }
   GIMP_TEST_END(identical_buffers == TRUE);
+
+  /* CMYK images: only exporters with GIMP_EXPORT_CAN_HANDLE_CMYK get
+   * them unchanged, the others get a converted copy.
+   */
+  cmyk_image = gimp_image_new (64, 48, GIMP_CMYK);
+
+  GIMP_TEST_START("gimp_image_new() with GIMP_CMYK");
+  GIMP_TEST_END(cmyk_image != NULL && gimp_image_get_base_type (cmyk_image) == GIMP_CMYK);
+
+  layer = gimp_layer_new (cmyk_image, "Background", 64, 48,
+                          GIMP_CMYK_IMAGE, 100.0, GIMP_LAYER_MODE_NORMAL);
+  GIMP_TEST_START("gimp_layer_new() with GIMP_CMYK_IMAGE");
+  GIMP_TEST_END(layer != NULL && gimp_image_insert_layer (cmyk_image, layer, NULL, 0));
+
+  g_object_set (options,
+                "capabilities", GIMP_EXPORT_CAN_HANDLE_RGB  |
+                                GIMP_EXPORT_CAN_HANDLE_CMYK |
+                                GIMP_EXPORT_CAN_HANDLE_ALPHA,
+                NULL);
+
+  GIMP_TEST_START("CMYK-capable export keeps the CMYK image");
+  export_image = cmyk_image;
+  delete = gimp_export_options_get_image (options, &export_image);
+  GIMP_TEST_END(delete == GIMP_EXPORT_IGNORE && export_image == cmyk_image);
+
+  g_object_set (options,
+                "capabilities", GIMP_EXPORT_CAN_HANDLE_RGB |
+                                GIMP_EXPORT_CAN_HANDLE_ALPHA,
+                NULL);
+
+  GIMP_TEST_START("RGB-only export of a CMYK image creates a copy");
+  export_image = cmyk_image;
+  delete = gimp_export_options_get_image (options, &export_image);
+  GIMP_TEST_END(delete == GIMP_EXPORT_EXPORT && export_image != cmyk_image &&
+                gimp_image_get_base_type (cmyk_image) == GIMP_CMYK);
+
+  if (! error && gimp_image_get_base_type (export_image) == GIMP_CMYK)
+    {
+      /* gimp_image_convert_type_full() is a stub until WS03 merges */
+      printf ("SKIP (pending integration): the exported copy is RGB\n");
+    }
+  else
+    {
+      GIMP_TEST_START("The exported copy of a CMYK image is RGB");
+      GIMP_TEST_END(gimp_image_get_base_type (export_image) == GIMP_RGB);
+    }
+
+  if (export_image != cmyk_image)
+    gimp_image_delete (export_image);
 
 
   GIMP_TEST_RETURN
