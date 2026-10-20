@@ -51,4 +51,73 @@ MyPaint insensitive; G1–G3 green.
 **Risks**: histogram slot mapping bugs (RGB layout must not change); dependence on 02's
 mask-components; text layout code paths with markup; selector code shared with RGB images.
 
-**Status**: (agent fills in)
+
+## Status
+
+Branch `ws/08`, 7 commits on `cmyk-01a-merged` (29a24b9..4b0f284). Build warning-free in
+owned files; `meson test`: 27 OK, 3 SKIP (compositing/image skeletons, babl probe), 1 FAIL
+(`appdata_file`, network = baseline). **G1-G3 green.**
+
+**Landed**
+* Histogram (INTERFACES §9): CMYK(A) float in the buffer space; slots VALUE 0, C..K 1..4,
+  alpha 5 (CMYKA only); VALUE = max ink; `has_channel()` per color model; nested statistics
+  use the unmapped channel (RGB results unchanged). New `gimp_histogram_is_cmyk()`,
+  `gimp_histogram_clear_values_for_format()`, `gimp_drawable_calculate_histogram_rgb[_async]()`.
+  Deviation: a CMYK drawable *without* alpha gives n_components 4 (C,M,Y,K) and no ALPHA
+  channel, matching RGB; with alpha 5.
+* Pickers (PLAN §5): `gimppickable.c` `pixel[]`/`sample[]` → `MAX_CHANNELS`;
+  `gimpcolortool.c:633`, `gimpsamplepointeditor.c:557` → `MAX_CHANNELS`; CMYK averages are
+  premultiplied ink averages (`CaMaYaKaA double`, image space) via the new
+  `gimp_pickable_average_color_native()` (used by `gimp_pickable_get_pixel_average()` for
+  CMYK formats and by the show-all pick), because every pickable's `get_pixel_average()`
+  calls `gimp_gegl_average_color()` (RGB, owner 02). Show-all pick no longer dereferences a
+  NULL `pixel`/`sample_format`. Contiguous region / select-by-color: composite criterion uses
+  the buffer space for CMYK (RGB/GRAY unchanged: sRGB).
+* Color frame: pixel mode shows C/M/Y/K(/A) natively; CMYK mode uses the color's own space
+  for CMYK colors.
+* Color tools: curves/levels/threshold use the RGB-conversion histogram and offer R,G,B on
+  CMYK; levels-stretch and equalize too; filter tools show "Operates on an RGB conversion of
+  the CMYK data" for point operations on CMYK drawables. Levels config ignores channels
+  outside VALUE..ALPHA (previously an array overrun for LUMINANCE/RGB too).
+* -Wswitch resolved: gimphistogram.c, gimplevelsconfig.c, gimpoperationthreshold.c,
+  gimpcurvestool.c (2), gimplevelstool.c (2), gimpthresholdtool.c, gimpcolorbar.c,
+  gimpcomponenteditor.c.
+* Component editor: Cyan, Magenta, Yellow, Black (+Alpha). Channels actions/commands need no
+  change (generic over `gimp_channel_new_from_component()`).
+* CMYK selector module: uses the active CMYK image's profile (from `set_format`) before the
+  simulation/preference profile → colors are in the image space.
+* Text: solid-color, no markup colors, no outline on CMYK → A8 coverage + native fill
+  (K-only stays K-only); otherwise RGB render + babl conversion (rich black, documented).
+  `gimptextundo.c:253` verified (base type from format, CMYK via 01a).
+* MyPaint tool: bad cursor + refusal message on CMYK drawables.
+
+**Acceptance**
+| id | result |
+|---|---|
+| H1 histogram (+ no-alpha, RGB regression) | pass (u8/u16/half/float/double) |
+| H2 pickers, CMYKA double, canary after 40 bytes | pass |
+| H3 select by color (K100 vs rich black) | pass |
+| H4 K-only text (+ two-color markup fallback) | pass (fonts loaded by the test's own init) |
+| H5 CMYK selector → image space, buffer fill exact | pass; FG-via-context fill **TODO** (see requests) |
+| H6 Levels on CMYK, outside selection bit-identical | pass |
+| Manual checklist (Channels dialog, pickers, histogram, MyPaint) | not run (no UI session) |
+
+Tier A #2b on owned files: fixed as above; remaining hits are explicit RGB formats
+(`gimpcurvestool.c:810,1158`, `gimplevelsconfig.c:625,698`, `gimpcolorframe.c:910`,
+`gimpcolorbar.c:255`, text `color[3]`), the selector's `cmyk_values[4]` (CMYK float, no
+alpha), iscissors (non-pixel).
+
+**Pending integration / requests for other owners**
+* libgimpcolor `gimpcolor.c` `gimp_color_set_alpha()` (unowned, ask coordinator/01b):
+  round-trips through RGBA, so `gimp_context_set_foreground()` turns an image-space CMYK FG
+  into a converted RGB color (K100 → rich black). Fix: for CMYK formats get/set
+  `CMYKA double` in the same space and change only alpha. H5 marks this `g_test_incomplete`.
+* 02: `gimp_gegl_average_color()` should average CMYK natively (PLAN §5); then the
+  workaround in `gimp_pickable_get_pixel_average()` can go. `gimp-gegl-loops.cc` `total[4]`
+  (convolve) is 02's.
+* 07: `gimpcursorview.c:763` `pixel[4]` → `MAX_CHANNELS`; `gimpviewrendererimage.c`
+  component previews index the sRGB preview buffer by component index (CMYK K would show
+  alpha) — render CMYK component previews from `gimp_image_get_component_format()`;
+  channel icons for CMYK components; `gimpcoloreditor.c` already passes the image format
+  (the selector fix covers it).
+* 03: `gimpdrawable.c`/`gimpimage.c`/`gimpprojection.c` `get_pixel_average` (see 02 note).
