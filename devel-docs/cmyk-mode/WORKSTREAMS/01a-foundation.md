@@ -84,4 +84,25 @@ other workstream can start the moment this merges. No UI, no PDB, no compositing
   list it in Status (do not loosen to tolerances).
 * The I8 cache must touch CMYK profiles only (RGB unchanged).
 
-**Status**: (agent fills in)
+**Status**: done (A1), ready to merge. Build warning-free in owned files; `meson test`:
+26 OK, 4 SKIP (compositing/image/histogram skeletons, babl probe), 1 FAIL (`appdata_file`,
+network = baseline).
+
+* **G1–G3** `layer-modes-golden` green, 20/20 repeated runs. Determinism required
+  `BABL_TOLERANCE=0`, `BABL_LUT=0`, `BABL_INHIBIT_CACHE=1` (set in the test's `main()`):
+  babl's timing-based path/LUT choice changed the last bits of RGB-perceptual and LCh results
+  between runs. No combination was dropped. Keys: `G1/<image>/<mode>/<composite space>`
+  (all composite modes folded into one SHA-1), `G2/rgb-u16/<mode>`, `G3/rgb-u16/*`.
+  G1–G3 stayed green after the enum change (mask `ALL` now includes BLACK).
+* **F1–F8, F12** pass (`cmyk-foundation`), also with `GIMP_TESTING_CMYK_PRECISION=double` and
+  `GIMP_TESTING_CMYK_ICC=default_cmyk.icc:FOGRA39L_coated.icc`. F9–F11 are skipped placeholders (01b).
+  Stub builtin: 1428 bytes, SHA-256 `f900f7ab…16263` (01b updates the constant once).
+* Tier A (#1, #2, #2b) on owned files: every base-type switch has a CMYK case; `[4]` hits are
+  RGB-only (`gimp-babl.c` probe `cmyk[4]`, lcms sampler `cmyk[4]`, `diff_rects[4]`);
+  `gimp-babl.c` `pixel[40]` OK (≥ 40 bytes); `gegl_buffer_sample` in
+  `gimp_drawable/projection_get_pixel_at` write to caller buffers (callers: 08/07, PLAN §5).
+* Deviations: INTERFACES §15 plug-in names (`file-tiff:file-jpeg:file-psd`, updated);
+  "clean" for new images = no undo and no extra dirtiness (every new `GimpImage` starts at
+  dirty 1); CMYK images keep the builtin profile as a parasite (RGB/GRAY still drop it);
+  `libgimp/tests/meson.build` gets a small python-only block, not one line.
+
