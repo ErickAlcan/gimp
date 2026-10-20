@@ -2473,6 +2473,20 @@ gimp_drawable_is_indexed (GimpDrawable *drawable)
   return (gimp_drawable_get_base_type (drawable) == GIMP_INDEXED);
 }
 
+/**
+ * gimp_drawable_is_cmyk:
+ * @drawable: a #GimpDrawable
+ *
+ * Returns: %TRUE if @drawable's buffer has a CMYK format.
+ **/
+gboolean
+gimp_drawable_is_cmyk (GimpDrawable *drawable)
+{
+  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), FALSE);
+
+  return (gimp_drawable_get_base_type (drawable) == GIMP_CMYK);
+}
+
 const Babl *
 gimp_drawable_get_component_format (GimpDrawable    *drawable,
                                     GimpChannelType  channel)
@@ -2497,6 +2511,13 @@ gimp_drawable_get_component_format (GimpDrawable    *drawable,
                                          BLUE);
 
     case GIMP_CHANNEL_ALPHA:
+      if (gimp_drawable_is_cmyk (drawable))
+        return babl_format_with_space (
+          babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                     gimp_drawable_get_precision (drawable),
+                                                     ALPHA_C)),
+          gimp_drawable_get_space (drawable));
+
       return gimp_babl_component_format (GIMP_RGB,
                                          gimp_drawable_get_precision (drawable),
                                          ALPHA);
@@ -2509,6 +2530,17 @@ gimp_drawable_get_component_format (GimpDrawable    *drawable,
     case GIMP_CHANNEL_INDEXED:
       return babl_format ("Y u8"); /* will extract grayscale, the best
                                     * we can do here */
+
+    case GIMP_CHANNEL_CYAN:
+    case GIMP_CHANNEL_MAGENTA:
+    case GIMP_CHANNEL_YELLOW:
+    case GIMP_CHANNEL_BLACK:
+      return babl_format_with_space (
+        babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                   gimp_drawable_get_precision (drawable),
+                                                   gimp_drawable_get_component_index (drawable,
+                                                                                      channel))),
+        gimp_drawable_get_space (drawable));
     }
 
   return NULL;
@@ -2527,12 +2559,17 @@ gimp_drawable_get_component_index (GimpDrawable    *drawable,
     case GIMP_CHANNEL_BLUE:    return BLUE;
     case GIMP_CHANNEL_GRAY:    return GRAY;
     case GIMP_CHANNEL_INDEXED: return INDEXED;
+    case GIMP_CHANNEL_CYAN:    return CYAN;
+    case GIMP_CHANNEL_MAGENTA: return MAGENTA;
+    case GIMP_CHANNEL_YELLOW:  return YELLOW;
+    case GIMP_CHANNEL_BLACK:   return BLACK;
     case GIMP_CHANNEL_ALPHA:
       switch (gimp_drawable_get_base_type (drawable))
         {
         case GIMP_RGB:     return ALPHA;
         case GIMP_GRAY:    return ALPHA_G;
         case GIMP_INDEXED: return ALPHA_I;
+        case GIMP_CMYK:    return ALPHA_C;
         }
     }
 

@@ -295,6 +295,8 @@ gimp_projection_estimate_memsize (GimpImageBaseType type,
   if (type == GIMP_INDEXED)
     type = GIMP_RGB;
 
+  /*  CMYK projections are CMYKA <precision>, the TRC is ignored  */
+
   format = gimp_babl_format (type,
                              gimp_babl_precision (component_type, FALSE),
                              TRUE, NULL);
