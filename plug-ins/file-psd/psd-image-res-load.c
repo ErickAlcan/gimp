@@ -1260,8 +1260,16 @@ load_resource_1039 (const PSDimageres  *res_a,
                                                      NULL);
   if (profile)
     {
-      if (img_a->color_mode == PSD_CMYK &&
-          gimp_color_profile_is_cmyk (profile))
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          /* Native CMYK image: the loader already set this profile as
+           * the image profile before writing any pixel (or decided it
+           * is unusable). Nothing to do here.
+           */
+          g_object_unref (profile);
+        }
+      else if (img_a->color_mode == PSD_CMYK &&
+               gimp_color_profile_is_cmyk (profile))
         {
           img_a->cmyk_profile = profile;
           /* Store CMYK profile in GimpImage if attached */
