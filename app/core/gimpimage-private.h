@@ -70,6 +70,12 @@ struct _GimpImagePrivate
 
   gboolean           converting;            /*  color model or profile in middle of conversion?  */
 
+  /*  rendering intent and BPC for drawable conversions of a base type
+   *  conversion, see _gimp_image_set_conversion_intent()
+   */
+  GimpColorRenderingIntent  conversion_intent;
+  gboolean                  conversion_bpc;
+
   /*  Cached color transforms: from layer to sRGB u8 and double, and back    */
   gboolean            color_transforms_created;
   GimpColorTransform *transform_to_srgb_u8;

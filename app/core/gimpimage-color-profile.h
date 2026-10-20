@@ -90,6 +90,10 @@ gboolean             gimp_image_validate_color_profile_by_format
 GimpColorProfile   * gimp_image_get_builtin_color_profile
                                                        (GimpImage           *image);
 
+GimpColorProfile   * gimp_get_default_cmyk_profile     (Gimp                *gimp,
+                                                        GimpColorProfile    *preferred,
+                                                        GError             **error);
+
 gboolean             gimp_image_assign_color_profile   (GimpImage           *image,
                                                         GimpColorProfile    *dest_profile,
                                                         GimpProgress        *progress,

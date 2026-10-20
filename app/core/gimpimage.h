@@ -251,6 +251,16 @@ gboolean              gimp_image_get_component_visible        (GimpImage        
 GimpComponentMask     gimp_image_get_visible_mask             (GimpImage          *image);
 
 
+/*  conversion settings  */
+
+void                  _gimp_image_set_conversion_intent       (GimpImage                *image,
+                                                               GimpColorRenderingIntent  intent,
+                                                               gboolean                  bpc);
+void                  _gimp_image_get_conversion_intent       (GimpImage                *image,
+                                                               GimpColorRenderingIntent *intent,
+                                                               gboolean                 *bpc);
+
+
 /*  emitting image signals  */
 
 void                  gimp_image_mode_changed                 (GimpImage          *image);
