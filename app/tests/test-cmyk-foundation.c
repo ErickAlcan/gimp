@@ -43,6 +43,7 @@
 #include "gegl/gimp-babl-compat.h"
 
 #include "core/gimp.h"
+#include "core/gimpcontext.h"
 #include "core/gimpdrawable.h"
 #include "core/gimperror.h"
 #include "core/gimpimage.h"
@@ -1383,6 +1384,137 @@ f12_masks (void)
 }
 
 
+/*  F13: CMYK GeglColor alpha changes and the FG color keep the inks  */
+
+static void
+f13_check_color (const gchar *encoding,
+                 const Babl  *space)
+{
+  static const gdouble  colors[][5] = { { 0.0, 0.0, 0.0, 1.0, 1.0 },
+                                        { 0.1, 0.2, 0.3, 0.4, 0.5 },
+                                        { 1.0, 0.0, 0.0, 0.0, 0.25 } };
+  GimpContext          *context = gimp_get_user_context (gimp);
+  const Babl           *format  = babl_format_with_space (encoding, space);
+  const Babl           *cmyka   = babl_format_with_space ("CMYKA double", space);
+  gint                  i, j;
+
+  /* premultiplied encodings must re-premultiply when alpha changes,
+   * which costs float precision; every other encoding is exact (the
+   * stored bytes are compared below; reading them back as double may
+   * differ in the last bit between babl paths)
+   */
+  const gboolean        premul  = (babl_get_model_flags (babl_format_get_model (format)) &
+                                   BABL_MODEL_FLAG_ASSOCIATED) != 0;
+  const gdouble         eps     = premul ? 1e-6 : 1e-12;
+
+  g_test_message ("F13: %s", encoding);
+
+  for (i = 0; i < G_N_ELEMENTS (colors); i++)
+    {
+      GeglColor *color = gegl_color_new (NULL);
+      GeglColor *fg;
+      guint8     raw[48];
+      guint8     raw_after[48];
+      gdouble    before[5];
+      gdouble    after[5];
+
+      /* the color in the requested encoding, as stored */
+      babl_process (babl_fish (babl_format ("CMYKA double"),
+                               babl_format (encoding)),
+                    colors[i], raw, 1);
+      gegl_color_set_pixel (color, format, raw);
+      gegl_color_get_pixel (color, cmyka, before);
+
+      /* alpha changes */
+      gimp_color_set_alpha (color, 0.5);
+      gegl_color_get_pixel (color, cmyka, after);
+      for (j = 0; j < 4; j++)
+        g_assert_cmpfloat (fabs (after[j] - before[j]), <=, eps);
+      g_assert_cmpfloat_with_epsilon (after[4], 0.5, 1.0 / 255.0);
+      g_assert_true (babl_format_get_space (gegl_color_get_format (color)) == space);
+
+      gimp_color_set_alpha (color, 1.0);
+      gegl_color_get_pixel (color, cmyka, after);
+      for (j = 0; j < 4; j++)
+        g_assert_cmpfloat (fabs (after[j] - before[j]), <=, eps);
+
+      /* foreground (sets alpha to opaque) */
+      gimp_context_set_foreground (context, color);
+      fg = gimp_context_get_foreground (context);
+
+      g_assert_true (babl_format_get_space (gegl_color_get_format (fg)) == space);
+      gegl_color_get_pixel (fg, cmyka, after);
+      for (j = 0; j < 4; j++)
+        g_assert_cmpfloat (fabs (after[j] - before[j]), <=, eps);
+      g_assert_cmpfloat (after[4], ==, 1.0);
+
+      /* and bit-identical in the stored encoding (the alpha variant of
+       * the original one)
+       */
+      if (! premul)
+        {
+          const Babl *stored = gegl_color_get_format (fg);
+          gdouble     opaque[5];
+
+          g_assert_true (babl_format_get_model (stored) ==
+                         babl_format_get_model (format) ||
+                         ! babl_format_has_alpha (format));
+          g_assert_true (babl_format_get_type (stored, 0) ==
+                         babl_format_get_type (format, 0));
+
+          /* from the color's actual inks: 0.1 * 65535 is a rounding
+           * tie, which babl's paths may break differently
+           */
+          memcpy (opaque, before, sizeof (opaque));
+          opaque[4] = 1.0;
+          babl_process (babl_fish (babl_format ("CMYKA double"),
+                                   babl_format_with_space ((const gchar *) stored,
+                                                           NULL)),
+                        opaque, raw, 1);
+          gegl_color_get_pixel (fg, stored, raw_after);
+          g_assert_true (memcmp (raw, raw_after,
+                                 babl_format_get_bytes_per_pixel (stored)) == 0);
+        }
+
+      g_object_unref (color);
+    }
+}
+
+static void
+f13_foreground_inks (void)
+{
+  GimpColorProfile *builtin = gimp_color_profile_new_cmyk_builtin ();
+  const Babl       *space;
+
+  space = gimp_color_profile_get_space (builtin,
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        NULL);
+
+  f13_check_color ("CMYKA u16",       space);
+  f13_check_color ("CMYKA u8",        space);
+  f13_check_color ("CMYKA float",     space);
+  f13_check_color ("CMYKA double",    space);
+  f13_check_color ("CMYK float",      space);
+  f13_check_color ("CMYK u16",        space);
+  f13_check_color ("cmykA u8",        space);
+  f13_check_color ("CaMaYaKaA float", space);
+
+  /* out-of-self-gamut on a premultiplied CMYK color is checked as CMYK */
+  {
+    GeglColor    *color = gegl_color_new (NULL);
+    const gfloat  pix[5] = { 0.0, 0.0, 0.0, 0.5, 0.5 };
+
+    gegl_color_set_pixel (color,
+                          babl_format_with_space ("CaMaYaKaA float", space),
+                          pix);
+    g_assert_false (gimp_color_is_out_of_self_gamut (color));
+    g_object_unref (color);
+  }
+
+  g_object_unref (builtin);
+}
+
+
 int
 main (int    argc,
       char **argv)
@@ -1409,6 +1541,7 @@ main (int    argc,
   g_test_add_func ("/cmyk-foundation/F10-babl-contract",     f10_babl_contract);
   g_test_add_func ("/cmyk-foundation/F11-lcms-formats",      f11_lcms_formats);
   g_test_add_func ("/cmyk-foundation/F12-masks",             f12_masks);
+  g_test_add_func ("/cmyk-foundation/F13-foreground-inks",   f13_foreground_inks);
 
   result = g_test_run ();
 
