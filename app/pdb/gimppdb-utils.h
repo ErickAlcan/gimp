@@ -84,6 +84,20 @@ gboolean          gimp_pdb_image_is_not_base_type (GimpImage          *image,
                                                    GimpImageBaseType   type,
                                                    GError            **error);
 
+gboolean          gimp_pdb_base_type_is_valid     (GimpImageBaseType   type,
+                                                   GimpPrecision       precision,
+                                                   GError            **error);
+gboolean          gimp_pdb_image_type_is_valid    (GimpImage          *image,
+                                                   GimpImageType       type,
+                                                   GError            **error);
+gboolean          gimp_pdb_image_has_component    (GimpImage          *image,
+                                                   GimpChannelType     component,
+                                                   GError            **error);
+gboolean          gimp_pdb_drawable_has_histogram_channel
+                                                  (GimpDrawable         *drawable,
+                                                   GimpHistogramChannel  channel,
+                                                   GError              **error);
+
 gboolean          gimp_pdb_image_is_precision     (GimpImage          *image,
                                                    GimpPrecision       precision,
                                                    GError            **error);

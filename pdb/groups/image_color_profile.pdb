@@ -67,6 +67,7 @@ This procedure returns the color profile that is actually used for
 this image, which is the profile returned by
 gimp_image_get_color_profile() if the image has a profile assigned, or
 a generated default RGB or grayscale profile, according to the image's type.
+CMYK images always have a CMYK profile assigned.
 HELP
 
     &mitch_pdb_misc('2015', '2.10');
@@ -113,6 +114,11 @@ passed as 'color_profile'. This procedure does no color conversion.
 However, it will change the pixel format of all layers to contain the
 babl space matching the profile. You must call this procedure before
 adding layers to the image.
+
+
+For a CMYK image, the profile must be a CMYK profile usable in both
+directions (with output tables), and passing NULL attaches the default
+CMYK profile instead of unsetting it.
 HELP
 
     &mitch_pdb_misc('2015', '2.10');
@@ -455,8 +461,11 @@ sub image_convert_color_profile {
     $help = <<'HELP';
 This procedure converts from the image's color profile (or the built-in
 RGB or grayscale profile if none is set) to the given color profile. Only
-RGB and grayscale color profiles are accepted, according to the image's
-type.
+RGB, grayscale and CMYK color profiles are accepted, according to the
+image's type. If 'color_profile' is NULL, RGB and grayscale images are
+converted to the built-in profile, CMYK images to the default CMYK
+profile. Use [method@Gimp.Image.convert_cmyk] to change the image's
+type to CMYK.
 HELP
 
     &mitch_pdb_misc('2015', '2.10');
@@ -484,6 +493,10 @@ HELP
       profile = gimp_color_profile_new_from_icc_profile (g_bytes_get_data (color_profile, NULL),
                                                          g_bytes_get_size (color_profile),
                                                          error);
+    }
+  else if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      profile = gimp_get_default_cmyk_profile (gimp, NULL, NULL);
     }
   else
     {
@@ -513,8 +526,8 @@ sub image_convert_color_profile_from_file {
     $help = <<'HELP';
 This procedure converts from the image's color profile (or the default
 RGB or grayscale profile if none is set) to an ICC profile specified by
-'file'.  Only RGB and grayscale color profiles are accepted, according to
-the image's type.
+'file'.  Only RGB, grayscale and CMYK color profiles are accepted,
+according to the image's type.
 HELP
 
     &mitch_pdb_misc('2015', '2.10');
