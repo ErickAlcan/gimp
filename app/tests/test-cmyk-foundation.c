@@ -57,11 +57,15 @@
 #include "gimp-app-test-utils.h"
 
 
+#ifndef TYPE_CMYKA_16
+#define TYPE_CMYKA_16 (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(2))
+#endif
+
 /*  SHA-256 of the builtin CMYK profile bytes (final 9^4/17^3 profile,
  *  WS01b; the 01a stub was f900f7ab...16263).
  */
 #define BUILTIN_CMYK_SHA256 \
-  "f900f7abb4d0cf692efe659836644d6f6221b0998d641ff93c175ae5e4116263"
+  "864a65a0c8b1bcc4e2186fec9e9c81c3950f102564e805c6822e27e20bda9307"
 
 
 static Gimp *gimp = NULL;
@@ -1059,8 +1063,15 @@ f9b_convert_assign (void)
                                          babl_format ("CMYKA u16"), k100,
                                          babl_format ("R'G'B'A u8"), rgba,
                                          1);
-    /* perceptual + BPC: K100 is black */
-    g_assert_cmpint (rgba[0], <=, 2);
+    /* perceptual + BPC on a v4 profile: lcms maps K100 to the v4
+     * perceptual reference black (L* ~ 3, about 12/255), neutral and no
+     * lighter than the relcol black point (0.08)
+     */
+    g_test_message ("K100 -> sRGB u8 (perceptual, BPC): %d %d %d",
+                    rgba[0], rgba[1], rgba[2]);
+    g_assert_cmpint (rgba[0], <=, 0.09 * 255);
+    g_assert_cmpint (ABS (rgba[0] - rgba[1]), <=, 2);
+    g_assert_cmpint (ABS (rgba[0] - rgba[2]), <=, 2);
     g_assert_cmpint (rgba[3], ==, 255);
   }
 
@@ -1161,12 +1172,18 @@ f11_check_format (GimpColorProfile *profile,
   guint32               lcms_type = 0;
   guint8                pixels[G_N_ELEMENTS (patches) * 5 * 8];
   gdouble               quantized[G_N_ELEMENTS (patches)][5];
-  gdouble               rgba[G_N_ELEMENTS (patches)][4];
+  gdouble               rgba[G_N_ELEMENTS (patches) * 4];
+  const Babl           *rgb_format;
+  gint                  rgb_n;
   gboolean              has_alpha;
   gint                  i, j;
 
   format    = babl_format (encoding);
   has_alpha = babl_format_has_alpha (format);
+
+  /* lcms only copies alpha if both sides have it */
+  rgb_format = babl_format (has_alpha ? "R'G'B'A double" : "R'G'B' double");
+  rgb_n      = has_alpha ? 4 : 3;
 
   /* the mapping itself */
   lcms_format = gimp_color_profile_get_lcms_format (format, &lcms_type);
@@ -1187,14 +1204,14 @@ f11_check_format (GimpColorProfile *profile,
   srgb = gimp_color_profile_new_rgb_srgb ();
 
   transform = gimp_color_transform_new (profile, format,
-                                        srgb,    babl_format ("R'G'B'A double"),
+                                        srgb,    rgb_format,
                                         GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
                                         GIMP_COLOR_TRANSFORM_FLAGS_NOOPTIMIZE);
   g_assert_nonnull (transform);
 
   gimp_color_transform_process_pixels (transform,
                                        format, pixels,
-                                       babl_format ("R'G'B'A double"), rgba,
+                                       rgb_format, rgba,
                                        n);
 
   for (i = 0; i < n; i++)
@@ -1209,14 +1226,15 @@ f11_check_format (GimpColorProfile *profile,
 
       for (j = 0; j < 3; j++)
         {
-          if (fabs (rgba[i][j] - ref[j]) > 1.0 / 255.0)
+          if (fabs (rgba[i * rgb_n + j] - ref[j]) > 1.0 / 255.0)
             g_error ("F11 %s: patch %d channel %d: %f, reference %f",
-                     encoding, i, j, rgba[i][j], ref[j]);
+                     encoding, i, j, rgba[i * rgb_n + j], ref[j]);
         }
 
-      g_assert_cmpfloat_with_epsilon (rgba[i][3],
-                                      has_alpha ? quantized[i][4] : 1.0,
-                                      1.0 / 255.0);
+      if (has_alpha)
+        g_assert_cmpfloat_with_epsilon (rgba[i * rgb_n + 3],
+                                        quantized[i][4],
+                                        1.0 / 255.0);
     }
 
   g_object_unref (transform);
