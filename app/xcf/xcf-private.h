@@ -149,4 +149,7 @@ struct _XcfInfo
   goffset             floating_sel_offset;
   XcfCompressionType  compression;
   gint                file_version;
+
+  /* TRUE once a valid "icc-profile" image parasite was attached */
+  gboolean            icc_profile_loaded;
 };
