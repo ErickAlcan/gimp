@@ -63,6 +63,13 @@ gimp_babl_format_get_image_type (const Babl *format)
     {
       return GIMP_RGBA_IMAGE;
     }
+  else if (gimp_babl_format_is_cmyk (format))
+    {
+      if (babl_format_has_alpha (format))
+        return GIMP_CMYKA_IMAGE;
+      else
+        return GIMP_CMYK_IMAGE;
+    }
   else if (babl_format_is_palette (format))
     {
       if (babl_format_has_alpha (format))

@@ -58,3 +58,7 @@ const Babl        * gimp_babl_format_change_trc            (const Babl          
                                                             GimpTRCType          trc);
 
 gchar            ** gimp_babl_print_color                  (GeglColor           *color);
+
+gboolean            gimp_babl_space_is_cmyk                (const Babl          *space);
+gboolean            gimp_babl_format_is_cmyk               (const Babl          *format);
+gboolean            gimp_babl_has_cmyk_support             (void);

@@ -20,6 +20,7 @@
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
 
 #include <cairo.h>
@@ -117,6 +118,55 @@ gimp_babl_init (void)
                        babl_type (babl_types[i]),
                        babl_component ("A"),
                        NULL);
+    }
+
+  /*  CMYK component formats and missing CMYK formats, registered
+   *  defensively in case a future babl adds them itself
+   */
+  for (i = 0; i < G_N_ELEMENTS (babl_types); i++)
+    {
+      static const struct
+      {
+        const gchar *prefix;
+        const gchar *component;
+      }
+      cmyk_components[] =
+      {
+        { "Cyan",    "Cyan"    },
+        { "Magenta", "Magenta" },
+        { "Yellow",  "Yellow"  },
+        { "Key",     "Key"     },
+        { "CMYK-A",  "A"       }
+      };
+
+      gchar name[32];
+      gint  j;
+
+      for (j = 0; j < G_N_ELEMENTS (cmyk_components); j++)
+        {
+          g_snprintf (name, sizeof (name), "%s %s",
+                      cmyk_components[j].prefix, babl_types[i]);
+
+          if (! babl_format_exists (name))
+            babl_format_new ("name", name,
+                             babl_model ("CMYKA"),
+                             babl_type (babl_types[i]),
+                             babl_component (cmyk_components[j].component),
+                             NULL);
+        }
+
+      g_snprintf (name, sizeof (name), "CaMaYaKaA %s", babl_types[i]);
+
+      if (! babl_format_exists (name))
+        babl_format_new ("name", name,
+                         babl_model ("CaMaYaKaA"),
+                         babl_type (babl_types[i]),
+                         babl_component ("Ca"),
+                         babl_component ("Ma"),
+                         babl_component ("Yea"),
+                         babl_component ("Ka"),
+                         babl_component ("A"),
+                         NULL);
     }
 }
 
@@ -314,6 +364,55 @@ babl_descriptions[] =
   { "B' double",      N_("Blue component") },
   { "B~ double",      N_("Blue component") },
 
+  { "CMYK u8",        N_("CMYK") },
+  { "CMYK u16",       N_("CMYK") },
+  { "CMYK u32",       N_("CMYK") },
+  { "CMYK half",      N_("CMYK") },
+  { "CMYK float",     N_("CMYK") },
+  { "CMYK double",    N_("CMYK") },
+
+  { "CMYKA u8",       N_("CMYK-alpha") },
+  { "CMYKA u16",      N_("CMYK-alpha") },
+  { "CMYKA u32",      N_("CMYK-alpha") },
+  { "CMYKA half",     N_("CMYK-alpha") },
+  { "CMYKA float",    N_("CMYK-alpha") },
+  { "CMYKA double",   N_("CMYK-alpha") },
+
+  { "Cyan u8",        N_("Cyan component") },
+  { "Cyan u16",       N_("Cyan component") },
+  { "Cyan u32",       N_("Cyan component") },
+  { "Cyan half",      N_("Cyan component") },
+  { "Cyan float",     N_("Cyan component") },
+  { "Cyan double",    N_("Cyan component") },
+
+  { "Magenta u8",     N_("Magenta component") },
+  { "Magenta u16",    N_("Magenta component") },
+  { "Magenta u32",    N_("Magenta component") },
+  { "Magenta half",   N_("Magenta component") },
+  { "Magenta float",  N_("Magenta component") },
+  { "Magenta double", N_("Magenta component") },
+
+  { "Yellow u8",      N_("Yellow component") },
+  { "Yellow u16",     N_("Yellow component") },
+  { "Yellow u32",     N_("Yellow component") },
+  { "Yellow half",    N_("Yellow component") },
+  { "Yellow float",   N_("Yellow component") },
+  { "Yellow double",  N_("Yellow component") },
+
+  { "Key u8",         N_("Black component") },
+  { "Key u16",        N_("Black component") },
+  { "Key u32",        N_("Black component") },
+  { "Key half",       N_("Black component") },
+  { "Key float",      N_("Black component") },
+  { "Key double",     N_("Black component") },
+
+  { "CMYK-A u8",      N_("Alpha component") },
+  { "CMYK-A u16",     N_("Alpha component") },
+  { "CMYK-A u32",     N_("Alpha component") },
+  { "CMYK-A half",    N_("Alpha component") },
+  { "CMYK-A float",   N_("Alpha component") },
+  { "CMYK-A double",  N_("Alpha component") },
+
   { "A u8",           N_("Alpha component") },
   { "A u16",          N_("Alpha component") },
   { "A u32",          N_("Alpha component") },
@@ -358,6 +457,16 @@ gimp_babl_format_get_description (const Babl *babl)
   if (description)
     return description;
 
+  /*  inverted and premultiplied CMYK encodings  */
+  if (gimp_babl_format_is_cmyk (babl) &&
+      babl_format_get_n_components (babl) >= 4)
+    {
+      if (babl_format_has_alpha (babl))
+        return _("CMYK-alpha");
+      else
+        return _("CMYK");
+    }
+
   return g_strconcat ("ERROR: unknown Babl format ",
                       babl_format_get_encoding (babl), NULL);
 }
@@ -370,8 +479,19 @@ gimp_babl_get_builtin_color_profile (GimpImageBaseType base_type,
   static GimpColorProfile *linear_rgb_profile  = NULL;
   static GimpColorProfile *gray_profile        = NULL;
   static GimpColorProfile *linear_gray_profile = NULL;
+  static GimpColorProfile *cmyk_profile        = NULL;
 
-  if (base_type == GIMP_GRAY)
+  if (base_type == GIMP_CMYK)
+    {
+      /*  the TRC is irrelevant for CMYK; keep our reference forever,
+       *  like the other builtin profiles
+       */
+      if (! cmyk_profile)
+        cmyk_profile = gimp_color_profile_new_cmyk_builtin ();
+
+      return cmyk_profile;
+    }
+  else if (base_type == GIMP_GRAY)
     {
       if (trc == GIMP_TRC_LINEAR)
         {
@@ -430,6 +550,37 @@ gimp_babl_format_get_color_profile (const Babl *format)
 
   g_return_val_if_fail (format != NULL, NULL);
 
+  if (gimp_babl_format_is_cmyk (format))
+    {
+      const Babl *space = babl_format_get_space (format);
+
+      if (! gimp_babl_space_is_cmyk (space))
+        return g_object_ref (gimp_babl_get_builtin_color_profile (GIMP_CMYK,
+                                                                  GIMP_TRC_NON_LINEAR));
+
+      icc = babl_space_get_icc (space, &icc_len);
+
+      profile = gimp_color_profile_new_from_icc_profile ((const guint8 *) icc,
+                                                         icc_len, NULL);
+
+      if (! profile)
+        profile = g_object_ref (gimp_babl_get_builtin_color_profile (GIMP_CMYK,
+                                                                     GIMP_TRC_NON_LINEAR));
+
+      return profile;
+    }
+  else if (gimp_babl_space_is_cmyk (babl_format_get_space (format)))
+    {
+      /*  I5: RGB/Y formats tagged with a CMYK space mean sRGB / gray  */
+      GimpImageBaseType base_type = GIMP_RGB;
+
+      if (gimp_babl_format_get_base_type (format) == GIMP_GRAY)
+        base_type = GIMP_GRAY;
+
+      return g_object_ref (gimp_babl_get_builtin_color_profile (base_type,
+                                                                gimp_babl_format_get_trc (format)));
+    }
+
   if (gimp_babl_format_get_trc (format) == GIMP_TRC_NON_LINEAR)
     {
       non_linear_format = format;
@@ -443,6 +594,7 @@ gimp_babl_format_get_color_profile (const Babl *format)
         {
         case GIMP_RGB:
         case GIMP_INDEXED:
+        case GIMP_CMYK:
           base_type = GIMP_RGB;
           break;
 
@@ -516,6 +668,10 @@ gimp_babl_format_get_base_type (const Babl *format)
            ! strcmp (name, "R~aG~aB~aA"))
     {
       return GIMP_RGB;
+    }
+  else if (gimp_babl_format_is_cmyk (format))
+    {
+      return GIMP_CMYK;
     }
   else if (babl_format_is_palette (format))
     {
@@ -643,7 +799,8 @@ gimp_babl_format_get_trc (const Babl *format)
     {
       return GIMP_TRC_PERCEPTUAL;
     }
-  else if (babl_format_is_palette (format))
+  else if (gimp_babl_format_is_cmyk (format) ||
+           babl_format_is_palette (format))
     {
       return GIMP_TRC_NON_LINEAR;
     }
@@ -815,6 +972,9 @@ gimp_babl_is_valid (GimpImageBaseType base_type,
         default:
           return FALSE;
         }
+
+    case GIMP_CMYK:
+      return gimp_babl_trc (precision) == GIMP_TRC_NON_LINEAR;
     }
 
   g_return_val_if_reached (FALSE);
@@ -1081,6 +1241,51 @@ gimp_babl_format (GimpImageBaseType  base_type,
 
     case GIMP_INDEXED:
       /* need to use the image's api for this */
+      break;
+
+    case GIMP_CMYK:
+      /* the TRC of precision is ignored for CMYK */
+      switch (gimp_babl_component_type (precision))
+        {
+        case GIMP_COMPONENT_TYPE_U8:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA u8", space);
+          else
+            return babl_format_with_space ("CMYK u8", space);
+
+        case GIMP_COMPONENT_TYPE_U16:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA u16", space);
+          else
+            return babl_format_with_space ("CMYK u16", space);
+
+        case GIMP_COMPONENT_TYPE_U32:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA u32", space);
+          else
+            return babl_format_with_space ("CMYK u32", space);
+
+        case GIMP_COMPONENT_TYPE_HALF:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA half", space);
+          else
+            return babl_format_with_space ("CMYK half", space);
+
+        case GIMP_COMPONENT_TYPE_FLOAT:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA float", space);
+          else
+            return babl_format_with_space ("CMYK float", space);
+
+        case GIMP_COMPONENT_TYPE_DOUBLE:
+          if (with_alpha)
+            return babl_format_with_space ("CMYKA double", space);
+          else
+            return babl_format_with_space ("CMYK double", space);
+
+        default:
+          break;
+        }
       break;
     }
 
@@ -1525,6 +1730,34 @@ gimp_babl_component_format (GimpImageBaseType base_type,
     case GIMP_INDEXED:
       /* need to use the image's api for this */
       break;
+
+    case GIMP_CMYK:
+      {
+        static const gchar *prefixes[] =
+        {
+          "Cyan", "Magenta", "Yellow", "Key", "CMYK-A"
+        };
+        const gchar *type = NULL;
+        gchar        name[32];
+
+        switch (gimp_babl_component_type (precision))
+          {
+          case GIMP_COMPONENT_TYPE_U8:     type = "u8";     break;
+          case GIMP_COMPONENT_TYPE_U16:    type = "u16";    break;
+          case GIMP_COMPONENT_TYPE_U32:    type = "u32";    break;
+          case GIMP_COMPONENT_TYPE_HALF:   type = "half";   break;
+          case GIMP_COMPONENT_TYPE_FLOAT:  type = "float";  break;
+          case GIMP_COMPONENT_TYPE_DOUBLE: type = "double"; break;
+          }
+
+        if (type && index >= 0 && index < G_N_ELEMENTS (prefixes))
+          {
+            g_snprintf (name, sizeof (name), "%s %s", prefixes[index], type);
+
+            return babl_format (name);
+          }
+      }
+      break;
     }
 
   g_return_val_if_reached (NULL);
@@ -1660,4 +1893,100 @@ gimp_babl_print_color (GeglColor *color)
   g_object_unref (color);
 
   return strings;
+}
+
+/**
+ * gimp_babl_space_is_cmyk:
+ * @space: (nullable): a babl space
+ *
+ * Returns: %TRUE if @space is a CMYK space, %FALSE otherwise (also for
+ *          %NULL, which means sRGB).
+ **/
+gboolean
+gimp_babl_space_is_cmyk (const Babl *space)
+{
+  return space && babl_space_is_cmyk (space);
+}
+
+/**
+ * gimp_babl_format_is_cmyk:
+ * @format: (nullable): a babl format
+ *
+ * Returns: %TRUE if @format's model is a CMYK model ("CMYK", "CMYKA",
+ *          "CaMaYaKaA", "cmyk", "cmykA", "camayakaA"), %FALSE otherwise
+ *          (also for %NULL).
+ **/
+gboolean
+gimp_babl_format_is_cmyk (const Babl *format)
+{
+  if (! format)
+    return FALSE;
+
+  return (babl_get_model_flags (babl_format_get_model (format)) &
+          BABL_MODEL_FLAG_CMYK) != 0;
+}
+
+static gpointer
+gimp_babl_has_cmyk_support_once (gpointer data)
+{
+  GimpColorProfile *profile;
+  const Babl       *space;
+  gboolean          supported = FALSE;
+
+  if (g_getenv ("GIMP_TESTING_NO_CMYK"))
+    return GINT_TO_POINTER (FALSE);
+
+  profile = gimp_color_profile_new_cmyk_builtin ();
+
+  if (! profile)
+    return GINT_TO_POINTER (FALSE);
+
+  space = gimp_color_profile_get_space (profile,
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        NULL);
+
+  if (gimp_babl_space_is_cmyk (space))
+    {
+      /*  babl without lcms converts CMYK with a naive formula, also for
+       *  spaces made from an ICC profile.  Mid-tone cyan differs a lot
+       *  between the two (K100 doesn't, babl uses BPC).
+       */
+      const gfloat cmyk[4] = { 0.5, 0.0, 0.0, 0.0 };
+      gfloat       rgb_space[3];
+      gfloat       rgb_naive[3];
+
+      babl_process (babl_fish (babl_format_with_space ("CMYK float", space),
+                               babl_format_with_space ("R'G'B' float", NULL)),
+                    cmyk, rgb_space, 1);
+      babl_process (babl_fish (babl_format ("CMYK float"),
+                               babl_format ("R'G'B' float")),
+                    cmyk, rgb_naive, 1);
+
+      supported = fabs (rgb_space[0] - rgb_naive[0]) > 0.1;
+    }
+
+  g_object_unref (profile);
+
+  return GINT_TO_POINTER (supported);
+}
+
+/**
+ * gimp_babl_has_cmyk_support:
+ *
+ * Checks (once per process) whether babl converts CMYK through ICC
+ * profiles, i.e. whether it was built with lcms.  CMYK images are only
+ * possible if it does.
+ *
+ * Always returns %FALSE if the environment variable GIMP_TESTING_NO_CMYK
+ * is set at the first call.
+ *
+ * Returns: %TRUE if CMYK images are supported.
+ **/
+gboolean
+gimp_babl_has_cmyk_support (void)
+{
+  static GOnce once = G_ONCE_INIT;
+
+  return GPOINTER_TO_INT (g_once (&once, gimp_babl_has_cmyk_support_once,
+                                  NULL));
 }
