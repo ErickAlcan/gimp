@@ -60,6 +60,7 @@
 #include "config/gimpguiconfig.h"
 
 #include "core/gimp.h"
+#include "core/gimperror.h"
 #include "core/gimpprogress.h"
 #include "core/gimptoolinfo.h"
 
@@ -2133,7 +2134,68 @@ gimp_color_profile_store_add_defaults (GimpColorProfileStore  *store,
   profile = gimp_babl_get_builtin_color_profile (base_type,
                                                  gimp_babl_trc (precision));
 
-  if (base_type == GIMP_GRAY)
+  if (base_type == GIMP_CMYK)
+    {
+      GimpColorProfile *preferred;
+
+      /*  For CMYK, "no profile" means the default CMYK profile: the
+       *  preferred CMYK profile if it can be used for CMYK images
+       *  (it must be bidirectional), else the built-in one. This is
+       *  what gimp_get_default_cmyk_profile() resolves to.
+       */
+      preferred = gimp_color_config_get_cmyk_color_profile (config, &my_error);
+
+      if (preferred && ! gimp_color_profile_is_cmyk_bidirectional (preferred))
+        {
+          g_set_error (&my_error, GIMP_ERROR, GIMP_FAILED,
+                       _("The preferred CMYK profile '%s' cannot be used "
+                         "for CMYK images (it has no output tables)"),
+                       gimp_color_profile_get_label (preferred));
+          g_clear_object (&preferred);
+        }
+
+      if (preferred)
+        label = g_strdup_printf (_("Default CMYK (%s)"),
+                                 gimp_color_profile_get_label (preferred));
+      else
+        label = g_strdup_printf (_("Built-in CMYK (%s)"),
+                                 gimp_color_profile_get_label (profile));
+
+      gimp_color_profile_store_add_file (store, NULL, label);
+      g_free (label);
+
+      if (preferred)
+        {
+          gchar *path;
+          GFile *file;
+
+          g_object_get (config, "cmyk-profile", &path, NULL);
+          file = gimp_file_new_for_config_path (path, NULL);
+          g_free (path);
+
+          label = g_strdup_printf (_("Preferred CMYK (%s)"),
+                                   gimp_color_profile_get_label (preferred));
+          g_object_unref (preferred);
+
+          if (file)
+            {
+              gimp_color_profile_store_add_file (store, file, label);
+              g_object_unref (file);
+            }
+
+          g_free (label);
+        }
+
+      if (my_error)
+        {
+          g_propagate_error (error, my_error);
+
+          return FALSE;
+        }
+
+      return TRUE;
+    }
+  else if (base_type == GIMP_GRAY)
     {
       label = g_strdup_printf (_("Built-in grayscale (%s)"),
                                gimp_color_profile_get_label (profile));

@@ -47,7 +47,8 @@ enum
   PROP_0,
   PROP_CONTEXT,
   PROP_LAYER_MODE,
-  PROP_GROUP
+  PROP_GROUP,
+  PROP_ALLOW_LEGACY
 };
 
 
@@ -56,6 +57,7 @@ struct _GimpLayerModeComboBoxPrivate
   GimpLayerModeContext context;
   GimpLayerMode        layer_mode;
   GimpLayerModeGroup   group;
+  gboolean             allow_legacy;
 };
 
 
@@ -119,12 +121,21 @@ gimp_layer_mode_combo_box_class_init (GimpLayerModeComboBoxClass *klass)
                                                       GIMP_LAYER_MODE_GROUP_DEFAULT,
                                                       GIMP_PARAM_READWRITE |
                                                       G_PARAM_CONSTRUCT));
+
+  /*  legacy modes are not available in CMYK images (I9)  */
+  g_object_class_install_property (object_class, PROP_ALLOW_LEGACY,
+                                   g_param_spec_boolean ("allow-legacy",
+                                                         NULL, NULL,
+                                                         TRUE,
+                                                         GIMP_PARAM_READWRITE));
 }
 
 static void
 gimp_layer_mode_combo_box_init (GimpLayerModeComboBox *combo)
 {
   combo->priv = gimp_layer_mode_combo_box_get_instance_private (combo);
+
+  combo->priv->allow_legacy = TRUE;
 
   gtk_combo_box_set_row_separator_func (GTK_COMBO_BOX (combo),
                                         gimp_layer_mode_combo_box_separator_func,
@@ -167,6 +178,11 @@ gimp_layer_mode_combo_box_set_property (GObject      *object,
       gimp_layer_mode_combo_box_set_group (combo, g_value_get_enum (value));
       break;
 
+    case PROP_ALLOW_LEGACY:
+      gimp_layer_mode_combo_box_set_allow_legacy (combo,
+                                                  g_value_get_boolean (value));
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -193,6 +209,10 @@ gimp_layer_mode_combo_box_get_property (GObject    *object,
 
     case PROP_GROUP:
       g_value_set_enum (value, combo->priv->group);
+      break;
+
+    case PROP_ALLOW_LEGACY:
+      g_value_set_boolean (value, combo->priv->allow_legacy);
       break;
 
     default:
@@ -266,6 +286,19 @@ gimp_layer_mode_combo_box_set_mode (GimpLayerModeComboBox *combo,
   g_return_if_fail (GIMP_IS_LAYER_MODE_COMBO_BOX (combo));
   g_return_if_fail (mode == -1 || (gimp_layer_mode_get_context (mode) & combo->priv->context));
 
+  /*  show the non-legacy equivalent of a legacy mode if legacy modes
+   *  are not allowed (the core maps them the same way)
+   */
+  if (mode != -1 && ! combo->priv->allow_legacy &&
+      gimp_layer_mode_is_legacy (mode))
+    {
+      GimpLayerMode new_mode;
+
+      if (gimp_layer_mode_get_for_group (mode, GIMP_LAYER_MODE_GROUP_DEFAULT,
+                                         &new_mode))
+        mode = new_mode;
+    }
+
   if (mode == -1)
     {
       gimp_int_combo_box_set_active (GIMP_INT_COMBO_BOX (combo), -1);
@@ -309,6 +342,9 @@ gimp_layer_mode_combo_box_set_group (GimpLayerModeComboBox *combo,
 {
   g_return_if_fail (GIMP_IS_LAYER_MODE_COMBO_BOX (combo));
 
+  if (! combo->priv->allow_legacy)
+    group = GIMP_LAYER_MODE_GROUP_DEFAULT;
+
   if (group != combo->priv->group)
     {
       g_object_freeze_notify (G_OBJECT (combo));
@@ -329,6 +365,55 @@ gimp_layer_mode_combo_box_get_group (GimpLayerModeComboBox *combo)
                         GIMP_LAYER_MODE_GROUP_DEFAULT);
 
   return combo->priv->group;
+}
+
+/**
+ * gimp_layer_mode_combo_box_set_allow_legacy:
+ * @combo:        a #GimpLayerModeComboBox
+ * @allow_legacy: whether legacy layer modes can be chosen
+ *
+ * Legacy layer modes are not available in CMYK images. When
+ * @allow_legacy is %FALSE, only the default group is shown and a
+ * legacy mode set on the combo is shown as its non-legacy equivalent.
+ **/
+void
+gimp_layer_mode_combo_box_set_allow_legacy (GimpLayerModeComboBox *combo,
+                                            gboolean               allow_legacy)
+{
+  g_return_if_fail (GIMP_IS_LAYER_MODE_COMBO_BOX (combo));
+
+  allow_legacy = allow_legacy ? TRUE : FALSE;
+
+  if (allow_legacy != combo->priv->allow_legacy)
+    {
+      g_object_freeze_notify (G_OBJECT (combo));
+
+      combo->priv->allow_legacy = allow_legacy;
+      g_object_notify (G_OBJECT (combo), "allow-legacy");
+
+      if (! allow_legacy)
+        {
+          gimp_layer_mode_combo_box_set_group (combo,
+                                               GIMP_LAYER_MODE_GROUP_DEFAULT);
+
+          if (combo->priv->layer_mode != -1 &&
+              gimp_layer_mode_is_legacy (combo->priv->layer_mode))
+            {
+              gimp_layer_mode_combo_box_set_mode (combo,
+                                                  combo->priv->layer_mode);
+            }
+        }
+
+      g_object_thaw_notify (G_OBJECT (combo));
+    }
+}
+
+gboolean
+gimp_layer_mode_combo_box_get_allow_legacy (GimpLayerModeComboBox *combo)
+{
+  g_return_val_if_fail (GIMP_IS_LAYER_MODE_COMBO_BOX (combo), TRUE);
+
+  return combo->priv->allow_legacy;
 }
 
 

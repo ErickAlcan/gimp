@@ -142,6 +142,8 @@ static void       gimp_layer_tree_view_drop_pixbuf                (GimpContainer
                                                                    GdkPixbuf                  *pixbuf,
                                                                    GimpViewable               *dest_viewable,
                                                                    GtkTreeViewDropPosition     drop_pos);
+static void       gimp_layer_tree_view_image_mode_changed         (GimpImage                  *image,
+                                                                   GimpLayerTreeView          *view);
 static void       gimp_layer_tree_view_set_image                  (GimpItemTreeView           *view,
                                                                    GimpImage                  *image);
 static GimpItem * gimp_layer_tree_view_item_new                   (GimpImage                  *image);
@@ -941,6 +943,24 @@ gimp_layer_tree_view_drop_pixbuf (GimpContainerTreeView   *tree_view,
 
 /*  GimpItemTreeView methods  */
 
+/*  layers of CMYK images can't have legacy modes (I9)  */
+static void
+gimp_layer_tree_view_image_mode_changed (GimpImage         *image,
+                                         GimpLayerTreeView *view)
+{
+  g_signal_handlers_block_by_func (view->priv->layer_mode_box,
+                                   gimp_layer_tree_view_layer_mode_box_callback,
+                                   view);
+
+  gimp_layer_mode_box_set_allow_legacy (GIMP_LAYER_MODE_BOX (view->priv->layer_mode_box),
+                                        ! image ||
+                                        gimp_image_get_base_type (image) != GIMP_CMYK);
+
+  g_signal_handlers_unblock_by_func (view->priv->layer_mode_box,
+                                     gimp_layer_tree_view_layer_mode_box_callback,
+                                     view);
+}
+
 static void
 gimp_layer_tree_view_set_image (GimpItemTreeView *view,
                                 GimpImage        *image)
@@ -952,12 +972,22 @@ gimp_layer_tree_view_set_image (GimpItemTreeView *view,
       g_signal_handlers_disconnect_by_func (gimp_item_tree_view_get_image (view),
                                             gimp_layer_tree_view_floating_selection_changed,
                                             view);
+      g_signal_handlers_disconnect_by_func (gimp_item_tree_view_get_image (view),
+                                            gimp_layer_tree_view_image_mode_changed,
+                                            view);
     }
 
   GIMP_ITEM_TREE_VIEW_CLASS (parent_class)->set_image (view, image);
 
+  gimp_layer_tree_view_image_mode_changed (image, layer_view);
+
   if (gimp_item_tree_view_get_image (view))
     {
+      g_signal_connect (gimp_item_tree_view_get_image (view),
+                        "mode-changed",
+                        G_CALLBACK (gimp_layer_tree_view_image_mode_changed),
+                        view);
+
       g_signal_connect (gimp_item_tree_view_get_image (view),
                         "floating-selection-changed",
                         G_CALLBACK (gimp_layer_tree_view_floating_selection_changed),

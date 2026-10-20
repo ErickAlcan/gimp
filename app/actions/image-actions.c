@@ -194,7 +194,12 @@ static const GimpRadioActionEntry image_convert_base_type_actions[] =
   { "image-convert-indexed", GIMP_ICON_CONVERT_INDEXED,
     NC_("image-convert-action", "_Indexed..."), NULL, { NULL },
     NC_("image-convert-action", "Convert the image to indexed colors"),
-    GIMP_INDEXED, GIMP_HELP_IMAGE_CONVERT_INDEXED }
+    GIMP_INDEXED, GIMP_HELP_IMAGE_CONVERT_INDEXED },
+
+  { "image-convert-cmyk", NULL,
+    NC_("image-convert-action", "C_MYK..."), NULL, { NULL },
+    NC_("image-convert-action", "Convert the image to the CMYK colorspace"),
+    GIMP_CMYK, GIMP_HELP_IMAGE_CONVERT_CMYK }
 };
 
 static const GimpRadioActionEntry image_convert_precision_actions[] =
@@ -386,6 +391,8 @@ image_actions_update (GimpActionGroup *group,
   GimpComponentType  component_type = GIMP_COMPONENT_TYPE_U8;
   GimpTRCType        trc            = GIMP_TRC_LINEAR;
   gboolean           is_indexed     = FALSE;
+  gboolean           is_cmyk        = FALSE;
+  gboolean           cmyk_support   = gimp_babl_has_cmyk_support ();
   gboolean           is_u8_gamma    = FALSE;
   gboolean           is_double      = FALSE;
   gboolean           aux            = FALSE;
@@ -436,6 +443,7 @@ image_actions_update (GimpActionGroup *group,
         case GIMP_RGB:     action = "image-convert-rgb";       break;
         case GIMP_GRAY:    action = "image-convert-grayscale"; break;
         case GIMP_INDEXED: action = "image-convert-indexed";   break;
+        case GIMP_CMYK:    action = "image-convert-cmyk";      break;
         }
 
       SET_ACTIVE (action, TRUE);
@@ -473,6 +481,7 @@ image_actions_update (GimpActionGroup *group,
       SET_ACTIVE (action, TRUE);
 
       is_indexed  = (base_type == GIMP_INDEXED);
+      is_cmyk     = (base_type == GIMP_CMYK);
       is_u8_gamma = (precision == GIMP_PRECISION_U8_NON_LINEAR);
       is_double   = (component_type == GIMP_COMPONENT_TYPE_DOUBLE);
       aux         = (gimp_image_get_selected_channels (image) != NULL);
@@ -516,7 +525,7 @@ image_actions_update (GimpActionGroup *group,
 
   SET_SENSITIVE ("image-duplicate", image);
 
-  if (profile)
+  if (profile || is_cmyk)
     {
       SET_LABEL ("image-convert-rgb",
                  C_("image-convert-action", "_RGB..."));
@@ -533,7 +542,9 @@ image_actions_update (GimpActionGroup *group,
 
   SET_SENSITIVE ("image-convert-rgb",       image);
   SET_SENSITIVE ("image-convert-grayscale", image);
-  SET_SENSITIVE ("image-convert-indexed",   image && !groups && is_u8_gamma);
+  /*  CMYK -> indexed is not supported, convert to RGB first  */
+  SET_SENSITIVE ("image-convert-indexed",   image && !groups && is_u8_gamma && !is_cmyk);
+  SET_SENSITIVE ("image-convert-cmyk",      image && (cmyk_support || is_cmyk));
 
   SET_SENSITIVE ("image-softproof-profile",                      image);
   SET_SENSITIVE ("image-softproof-intent-perceptual",            image);
@@ -551,16 +562,19 @@ image_actions_update (GimpActionGroup *group,
   SET_SENSITIVE ("image-convert-double", image && !is_indexed && component_type != GIMP_COMPONENT_TYPE_DOUBLE);
   SET_VISIBLE   ("image-convert-double", is_double);
 
-  SET_SENSITIVE ("image-convert-linear",     image && !is_indexed && trc != GIMP_TRC_LINEAR);
+  /*  CMYK images only use non-linear precisions  */
+  SET_SENSITIVE ("image-convert-linear",     image && !is_indexed && !is_cmyk && trc != GIMP_TRC_LINEAR);
   SET_SENSITIVE ("image-convert-non-linear", image && trc != GIMP_TRC_NON_LINEAR);
-  SET_SENSITIVE ("image-convert-perceptual", image && !is_indexed && trc != GIMP_TRC_PERCEPTUAL);
+  SET_SENSITIVE ("image-convert-perceptual", image && !is_indexed && !is_cmyk && trc != GIMP_TRC_PERCEPTUAL);
 
-  SET_SENSITIVE ("image-color-profile-use-srgb", image && (profile || profile_hidden));
+  /*  "use sRGB" and hidden profiles do not apply to CMYK images  */
+  SET_SENSITIVE ("image-color-profile-use-srgb", image && !is_cmyk && (profile || profile_hidden));
   SET_ACTIVE    ("image-color-profile-use-srgb", image && profile_srgb);
 
   SET_SENSITIVE ("image-color-profile-assign",  image);
   SET_SENSITIVE ("image-color-profile-convert", image);
-  SET_SENSITIVE ("image-color-profile-discard", image && profile);
+  /*  a CMYK image always has a CMYK profile  */
+  SET_SENSITIVE ("image-color-profile-discard", image && profile && !is_cmyk);
   SET_SENSITIVE ("image-color-profile-save",    image);
 
   SET_SENSITIVE ("image-flip-horizontal", image);

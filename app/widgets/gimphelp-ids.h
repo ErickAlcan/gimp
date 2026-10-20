@@ -147,6 +147,7 @@
 #define GIMP_HELP_IMAGE_CONVERT_RGB               "gimp-image-convert-rgb"
 #define GIMP_HELP_IMAGE_CONVERT_GRAYSCALE         "gimp-image-convert-grayscale"
 #define GIMP_HELP_IMAGE_CONVERT_INDEXED           "gimp-image-convert-indexed"
+#define GIMP_HELP_IMAGE_CONVERT_CMYK              "gimp-image-convert-cmyk"
 #define GIMP_HELP_IMAGE_CONVERT_U8                "gimp-image-convert-u8"
 #define GIMP_HELP_IMAGE_CONVERT_U16               "gimp-image-convert-u16"
 #define GIMP_HELP_IMAGE_CONVERT_U32               "gimp-image-convert-u32"
