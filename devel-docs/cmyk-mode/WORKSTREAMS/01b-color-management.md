@@ -131,3 +131,30 @@ Notes, risks and requests
   5.1"); later commits use the session's attribution ("Claude Opus 5.5").
 * INTERFACES.md: no deviation. Signatures unchanged; no new public symbols, so
   `gimpcolor.def` is unchanged.
+
+### Follow-up: CMYK GeglColor alpha (WS08 finding; `libgimpcolor/gimpcolor.c` now owned by 01b)
+* Bug: `gimp_color_set_alpha()` went through `gegl_color_get/set_rgba()`, so
+  `gimp_context_real_set_foreground/background()`, which forces opaque alpha, re-separated
+  an image-space CMYK FG/BG (K100 became C≈0.009 rich black). This broke exact FG fills
+  (INTERFACES §11, C4).
+* Fix: for any `BABL_MODEL_FLAG_CMYK` format, `set_alpha` reads and writes
+  `CMYKA double` in the colour's own space and changes only alpha, then re-stores the alpha
+  variant of the original encoding. No RGB is involved. gtk-doc says so.
+* Audit of `gimpcolor.c`:
+  * `is_out_of_self_gamut` now uses the CMYK model flag (the premultiplied CMYK models were
+    missing) and reads CMYK in the same space.
+  * `is_out_of_gamut` (CMYK space), `param_color_cmp` (memcmp in the native format,
+    48-byte buffers ≥ CMYKA double), `get_with_alpha` (CMYK→CMYKA, cmyk→cmykA) and the
+    perceptual/CIE2000 helpers (comparison only, no writes) are OK.
+  * In `app/core/gimpcontext.c` the FG/BG colours go only through `set_alpha`, with no other
+    RGB round trip.
+* **F13** (`/cmyk-foundation/F13-foreground-inks`): K100, (0.1,0.2,0.3,0.4) and C100 in
+  CMYKA u16/u8/float/double, CMYK float/u16, `cmykA u8` and `CaMaYaKaA float`, in the
+  builtin space.
+  * `set_alpha (0.5)` and `(1.0)` keep the inks; the colour's space is unchanged.
+  * `gimp_context_set_foreground()` gives the same space, the same inks, alpha 1, and
+    bit-identical stored bytes. Premultiplied encodings are checked within 1e-6, because
+    re-premultiplying in float costs precision.
+  * Fails without the fix (C = 0.0092 on K100), passes with it.
+* Suite: 26 OK / 4 SKIP / 1 FAIL (`appdata_file`); G1–G3 green.
+
