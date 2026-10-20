@@ -65,6 +65,10 @@ GimpAsync     * gimp_histogram_calculate_async (GimpHistogram        *histogram,
 
 void            gimp_histogram_clear_values    (GimpHistogram        *histogram,
                                                 gint                  n_components);
+void            gimp_histogram_clear_values_for_format
+                                               (GimpHistogram        *histogram,
+                                                const Babl           *format);
+gboolean        gimp_histogram_is_cmyk         (GimpHistogram        *histogram);
 
 gdouble         gimp_histogram_get_maximum     (GimpHistogram        *histogram,
                                                 GimpHistogramChannel  channel);

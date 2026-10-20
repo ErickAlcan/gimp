@@ -572,10 +572,9 @@ gimp_histogram_editor_validate (GimpHistogramEditor *editor)
 
               editor->histogram = gimp_histogram_new (editor->trc);
 
-              gimp_histogram_clear_values (
+              gimp_histogram_clear_values_for_format (
                 editor->histogram,
-                babl_format_get_n_components (
-                  gimp_drawable_get_format (editor->drawable)));
+                gimp_drawable_get_format (editor->drawable));
 
               gimp_histogram_view_set_histogram (view, editor->histogram);
             }
