@@ -210,7 +210,7 @@ jpeg_create_procedure (GimpPlugIn  *plug_in,
                                              GIMP_PDB_PROC_TYPE_PLUGIN,
                                              TRUE, jpeg_export, NULL, NULL);
 
-      gimp_procedure_set_image_types (procedure, "RGB*, GRAY*");
+      gimp_procedure_set_image_types (procedure, "RGB*, GRAY*, CMYK*");
 
       gimp_procedure_set_menu_label (procedure, _("JPEG image"));
 
@@ -232,8 +232,9 @@ jpeg_create_procedure (GimpPlugIn  *plug_in,
                                           "jpg,jpeg,jpe");
 
       gimp_export_procedure_set_capabilities (GIMP_EXPORT_PROCEDURE (procedure),
-                                              GIMP_EXPORT_CAN_HANDLE_RGB |
-                                              GIMP_EXPORT_CAN_HANDLE_GRAY,
+                                              GIMP_EXPORT_CAN_HANDLE_RGB  |
+                                              GIMP_EXPORT_CAN_HANDLE_GRAY |
+                                              GIMP_EXPORT_CAN_HANDLE_CMYK,
                                               NULL, NULL, NULL);
 
       /* See bugs #63610 and #61088 for a discussion about the quality
