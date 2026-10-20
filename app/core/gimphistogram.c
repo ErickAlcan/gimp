@@ -61,6 +61,7 @@ enum
 struct _GimpHistogramPrivate
 {
   GimpTRCType  trc;
+  gboolean     cmyk;
   gint         n_channels;
   gint         n_bins;
   gdouble     *values;
@@ -77,6 +78,7 @@ typedef struct
   GeglRectangle  mask_rect;
 
   /*  output  */
+  gboolean       cmyk;
   gint           n_components;
   gint           n_bins;
   gdouble       *values;
@@ -109,8 +111,11 @@ static gint64     gimp_histogram_get_memsize              (GimpObject           
 
 static gboolean   gimp_histogram_map_channel              (GimpHistogram        *histogram,
                                                            GimpHistogramChannel *channel);
+static gint       gimp_histogram_channel_to_slot          (GimpHistogram        *histogram,
+                                                           GimpHistogramChannel  channel);
 
 static void       gimp_histogram_set_values               (GimpHistogram        *histogram,
+                                                           gboolean              cmyk,
                                                            gint                  n_components,
                                                            gint                  n_bins,
                                                            gdouble              *values);
@@ -310,6 +315,7 @@ gimp_histogram_duplicate (GimpHistogram *histogram)
 
   dup = gimp_histogram_new (histogram->priv->trc);
 
+  dup->priv->cmyk       = histogram->priv->cmyk;
   dup->priv->n_channels = histogram->priv->n_channels;
   dup->priv->n_bins     = histogram->priv->n_bins;
   dup->priv->values     = g_memdup2 (histogram->priv->values,
@@ -352,7 +358,7 @@ gimp_histogram_calculate (GimpHistogram       *histogram,
 
   gimp_histogram_calculate_internal (NULL, &context);
 
-  gimp_histogram_set_values (histogram,
+  gimp_histogram_set_values (histogram, context.cmyk,
                              context.n_components, context.n_bins,
                              context.values);
 }
@@ -424,7 +430,48 @@ gimp_histogram_clear_values (GimpHistogram *histogram,
   if (histogram->priv->calculate_async)
     gimp_async_cancel_and_wait (histogram->priv->calculate_async);
 
-  gimp_histogram_set_values (histogram, n_components, 0, NULL);
+  gimp_histogram_set_values (histogram, FALSE, n_components, 0, NULL);
+}
+
+/**
+ * gimp_histogram_clear_values_for_format:
+ * @histogram: a #GimpHistogram
+ * @format:    the format of the pixels the histogram will be computed on
+ *
+ * Like gimp_histogram_clear_values(), but derives the number of
+ * components and the color model (RGB/GRAY or CMYK) from @format, so
+ * that gimp_histogram_has_channel() gives the right answers before the
+ * first calculation finished.
+ **/
+void
+gimp_histogram_clear_values_for_format (GimpHistogram *histogram,
+                                        const Babl    *format)
+{
+  g_return_if_fail (GIMP_IS_HISTOGRAM (histogram));
+  g_return_if_fail (format != NULL);
+
+  if (histogram->priv->calculate_async)
+    gimp_async_cancel_and_wait (histogram->priv->calculate_async);
+
+  gimp_histogram_set_values (histogram,
+                             gimp_babl_format_is_cmyk (format),
+                             babl_format_get_n_components (format),
+                             0, NULL);
+}
+
+/**
+ * gimp_histogram_is_cmyk:
+ * @histogram: a #GimpHistogram
+ *
+ * Returns: %TRUE if @histogram holds the C, M, Y, K (and alpha)
+ *          components of CMYK pixels.
+ **/
+gboolean
+gimp_histogram_is_cmyk (GimpHistogram *histogram)
+{
+  g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), FALSE);
+
+  return histogram->priv->cmyk;
 }
 
 
@@ -508,6 +555,22 @@ gimp_histogram_get_component (GimpHistogram *histogram,
 {
   g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), 0.0);
 
+  if (histogram->priv->cmyk)
+    {
+      /*  CMYK slots: C, M, Y, K, alpha are 1..5 (see channel_to_slot)  */
+      GimpHistogramPrivate *priv = histogram->priv;
+
+      if (! priv->values                                     ||
+          component < 0                                      ||
+          component >= gimp_histogram_n_components (histogram) ||
+          bin < 0 || bin >= priv->n_bins)
+        {
+          return 0.0;
+        }
+
+      return priv->values[(component + 1) * priv->n_bins + bin];
+    }
+
   if (gimp_histogram_n_components (histogram) > 2)
     component++;
 
@@ -539,6 +602,32 @@ gimp_histogram_has_channel (GimpHistogram        *histogram,
 {
   g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), FALSE);
 
+  if (histogram->priv->cmyk)
+    {
+      /*  INTERFACES §9: VALUE (max ink), C, M, Y, K and alpha only  */
+      switch (channel)
+        {
+        case GIMP_HISTOGRAM_VALUE:
+        case GIMP_HISTOGRAM_CYAN:
+        case GIMP_HISTOGRAM_MAGENTA:
+        case GIMP_HISTOGRAM_YELLOW:
+        case GIMP_HISTOGRAM_BLACK:
+          return TRUE;
+
+        case GIMP_HISTOGRAM_ALPHA:
+          return gimp_histogram_n_components (histogram) == 5;
+
+        case GIMP_HISTOGRAM_RED:
+        case GIMP_HISTOGRAM_GREEN:
+        case GIMP_HISTOGRAM_BLUE:
+        case GIMP_HISTOGRAM_LUMINANCE:
+        case GIMP_HISTOGRAM_RGB:
+          return FALSE;
+        }
+
+      g_return_val_if_reached (FALSE);
+    }
+
   switch (channel)
     {
     case GIMP_HISTOGRAM_VALUE:
@@ -554,6 +643,12 @@ gimp_histogram_has_channel (GimpHistogram        *histogram,
     case GIMP_HISTOGRAM_ALPHA:
       return gimp_histogram_n_components (histogram) == 2 ||
              gimp_histogram_n_components (histogram) == 4;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      return FALSE;
     }
 
   g_return_val_if_reached (FALSE);
@@ -604,6 +699,7 @@ gimp_histogram_get_mean (GimpHistogram        *histogram,
                          gint                  end)
 {
   GimpHistogramPrivate *priv;
+  GimpHistogramChannel  orig_channel;
   gint                  i;
   gdouble               mean = 0.0;
   gdouble               count;
@@ -611,6 +707,7 @@ gimp_histogram_get_mean (GimpHistogram        *histogram,
   g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), 0.0);
 
   priv = histogram->priv;
+  orig_channel = channel;
 
   if (! priv->values ||
       start > end    ||
@@ -643,7 +740,7 @@ gimp_histogram_get_mean (GimpHistogram        *histogram,
         }
     }
 
-  count = gimp_histogram_get_count (histogram, channel, start, end);
+  count = gimp_histogram_get_count (histogram, orig_channel, start, end);
 
   if (count > 0.0)
     return mean / count;
@@ -658,6 +755,7 @@ gimp_histogram_get_median (GimpHistogram         *histogram,
                            gint                   end)
 {
   GimpHistogramPrivate *priv;
+  GimpHistogramChannel  orig_channel;
   gint                  i;
   gdouble               sum = 0.0;
   gdouble               count;
@@ -665,6 +763,7 @@ gimp_histogram_get_median (GimpHistogram         *histogram,
   g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), -1.0);
 
   priv = histogram->priv;
+  orig_channel = channel;
 
   if (! priv->values ||
       start > end    ||
@@ -676,7 +775,7 @@ gimp_histogram_get_median (GimpHistogram         *histogram,
   start = CLAMP (start, 0, priv->n_bins - 1);
   end   = CLAMP (end,   0, priv->n_bins - 1);
 
-  count = gimp_histogram_get_count (histogram, channel, start, end);
+  count = gimp_histogram_get_count (histogram, orig_channel, start, end);
 
   if (channel == GIMP_HISTOGRAM_RGB)
     {
@@ -808,6 +907,7 @@ gimp_histogram_get_std_dev (GimpHistogram        *histogram,
                             gint                  end)
 {
   GimpHistogramPrivate *priv;
+  GimpHistogramChannel  orig_channel;
   gint                  i;
   gdouble               dev = 0.0;
   gdouble               count;
@@ -816,6 +916,7 @@ gimp_histogram_get_std_dev (GimpHistogram        *histogram,
   g_return_val_if_fail (GIMP_IS_HISTOGRAM (histogram), 0.0);
 
   priv = histogram->priv;
+  orig_channel = channel;
 
   if (! priv->values ||
       start > end    ||
@@ -824,8 +925,8 @@ gimp_histogram_get_std_dev (GimpHistogram        *histogram,
       return 0.0;
     }
 
-  mean  = gimp_histogram_get_mean  (histogram, channel, start, end);
-  count = gimp_histogram_get_count (histogram, channel, start, end);
+  mean  = gimp_histogram_get_mean  (histogram, orig_channel, start, end);
+  count = gimp_histogram_get_count (histogram, orig_channel, start, end);
 
   if (count == 0.0)
     count = 1.0;
@@ -842,7 +943,7 @@ gimp_histogram_get_std_dev (GimpHistogram        *histogram,
         }
       else
         {
-          value = gimp_histogram_get_value (histogram, channel, i);
+          value = gimp_histogram_get_value (histogram, orig_channel, i);
         }
 
       dev += value * SQR (((gdouble) i / (gdouble)  (priv->n_bins - 1)) - mean);
@@ -854,11 +955,70 @@ gimp_histogram_get_std_dev (GimpHistogram        *histogram,
 
 /*  private functions  */
 
+/*  Storage slot of a (valid) channel of a CMYK histogram, -1 if the
+ *  channel does not exist (INTERFACES §9, m7).  RGB/GRAY histograms keep
+ *  their historical "enum value == slot" layout and do not use this.
+ */
+static gint
+gimp_histogram_channel_to_slot (GimpHistogram        *histogram,
+                                GimpHistogramChannel  channel)
+{
+  if (! gimp_histogram_has_channel (histogram, channel))
+    return -1;
+
+  switch (channel)
+    {
+    case GIMP_HISTOGRAM_VALUE:   return 0;
+    case GIMP_HISTOGRAM_CYAN:    return 1;
+    case GIMP_HISTOGRAM_MAGENTA: return 2;
+    case GIMP_HISTOGRAM_YELLOW:  return 3;
+    case GIMP_HISTOGRAM_BLACK:   return 4;
+    case GIMP_HISTOGRAM_ALPHA:   return 5;
+
+    case GIMP_HISTOGRAM_RED:
+    case GIMP_HISTOGRAM_GREEN:
+    case GIMP_HISTOGRAM_BLUE:
+    case GIMP_HISTOGRAM_LUMINANCE:
+    case GIMP_HISTOGRAM_RGB:
+      break;
+    }
+
+  return -1;
+}
+
+/*  Maps @channel to its storage slot.  On return, *channel is either
+ *  GIMP_HISTOGRAM_RGB (the derived "all of R, G, B" channel of RGB
+ *  histograms) or a slot index that can be used with HISTOGRAM_VALUE().
+ */
 static gboolean
 gimp_histogram_map_channel (GimpHistogram        *histogram,
                             GimpHistogramChannel *channel)
 {
   GimpHistogramPrivate *priv = histogram->priv;
+
+  if (priv->cmyk)
+    {
+      gint slot = gimp_histogram_channel_to_slot (histogram, *channel);
+
+      if (slot < 0 || slot >= priv->n_channels)
+        return FALSE;
+
+      *channel = slot;
+
+      return TRUE;
+    }
+
+  switch (*channel)
+    {
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      return FALSE;
+
+    default:
+      break;
+    }
 
   if (*channel == GIMP_HISTOGRAM_RGB)
     return gimp_histogram_n_components (histogram) >= 3;
@@ -883,6 +1043,7 @@ gimp_histogram_map_channel (GimpHistogram        *histogram,
 
 static void
 gimp_histogram_set_values (GimpHistogram *histogram,
+                           gboolean       cmyk,
                            gint           n_components,
                            gint           n_bins,
                            gdouble       *values)
@@ -895,9 +1056,13 @@ gimp_histogram_set_values (GimpHistogram *histogram,
   if (n_channels > 0)
     n_channels += N_DERIVED_CHANNELS;
 
-  if (n_channels != priv->n_channels)
+  /*  a change of the color model changes the set of valid channels,
+   *  which listeners learn about through "n-components"
+   */
+  if (n_channels != priv->n_channels || cmyk != priv->cmyk)
     {
       priv->n_channels = n_channels;
+      priv->cmyk       = cmyk;
 
       notify_n_components = TRUE;
     }
@@ -960,6 +1125,18 @@ gimp_histogram_calculate_internal (GimpAsync        *async,
       format = gimp_babl_format (GIMP_GRAY,
                                  gimp_babl_precision (GIMP_COMPONENT_TYPE_FLOAT,
                                                       priv->trc),
+                                 babl_format_has_alpha (format),
+                                 space);
+      break;
+
+    case GIMP_CMYK:
+      /*  INTERFACES §9: native "CMYK(A) float" in the buffer's space
+       *  (the TRC is meaningless for CMYK and ignored by gimp_babl_format())
+       */
+      context->cmyk = TRUE;
+
+      format = gimp_babl_format (GIMP_CMYK,
+                                 GIMP_PRECISION_FLOAT_NON_LINEAR,
                                  babl_format_has_alpha (format),
                                  space);
       break;
@@ -1045,7 +1222,8 @@ gimp_histogram_calculate_area (const GeglRectangle *area,
   n_bins       = context->n_bins;
   n_components = context->n_components;
 
-  fish = babl_fish (data->format, babl_format ("Y float"));
+  /*  no luminance for CMYK: its slot stays empty  */
+  fish = context->cmyk ? NULL : babl_fish (data->format, babl_format ("Y float"));
 
   values = g_new0 (gdouble, (n_components + N_DERIVED_CHANNELS) * n_bins);
   gimp_atomic_slist_push_head (&data->values_list, values);
@@ -1094,6 +1272,45 @@ gimp_histogram_calculate_area (const GeglRectangle *area,
       gfloat        luminance;
 
       CHECK_CANCELED (0);
+
+      if (context->cmyk)
+        {
+          /*  slots: 0 = max ink of C, M, Y, K; 1..4 = C, M, Y, K;
+           *  5 = alpha (CMYKA only).  Ink values are alpha-weighted,
+           *  like the RGB values below.
+           */
+          const gfloat   *mask_data = (context->mask ?
+                                       iter->items[1].data : NULL);
+          const gboolean  has_alpha = (n_components == 5);
+
+          while (length--)
+            {
+              const gdouble masked = mask_data ? *mask_data : 1.0;
+              const gdouble weight = (has_alpha ? data[4] : 1.0) * masked;
+
+              VALUE (1, data[0]) += weight;
+              VALUE (2, data[1]) += weight;
+              VALUE (3, data[2]) += weight;
+              VALUE (4, data[3]) += weight;
+
+              if (has_alpha)
+                VALUE (5, data[4]) += masked;
+
+              max = MAX (data[0], data[1]);
+              max = MAX (data[2], max);
+              max = MAX (data[3], max);
+              VALUE (0, max) += weight;
+
+              data += n_components;
+
+              if (mask_data)
+                mask_data += 1;
+
+              CHECK_CANCELED (length);
+            }
+
+          continue;
+        }
 
       if (context->mask)
         {
@@ -1267,7 +1484,7 @@ gimp_histogram_calculate_async_callback (GimpAsync        *async,
 
   if (gimp_async_is_finished (async))
     {
-      gimp_histogram_set_values (context->histogram,
+      gimp_histogram_set_values (context->histogram, context->cmyk,
                                  context->n_components, context->n_bins,
                                  context->values);
     }

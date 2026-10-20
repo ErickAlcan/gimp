@@ -554,7 +554,7 @@ gimp_sample_point_editor_update (GimpSamplePointEditor *editor)
         {
           GimpSamplePoint   *sample_point = list->data;
           const Babl        *format;
-          gdouble            pixel[4];
+          gdouble            pixel[MAX_CHANNELS]; /* I10: native format */
           GeglColor         *color;
           GimpColorPickMode  pick_mode;
           gint               x;

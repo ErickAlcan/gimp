@@ -25,6 +25,8 @@
 
 #include "core-types.h"
 
+#include "gegl/gimp-babl.h"
+#include "gegl/gimp-gegl-loops.h"
 #include "gegl/gimp-gegl-nodes.h"
 #include "gegl/gimptilehandlervalidate.h"
 
@@ -42,6 +44,7 @@
 static GimpAsync * gimp_drawable_calculate_histogram_internal (GimpDrawable  *drawable,
                                                                GimpHistogram *histogram,
                                                                gboolean       with_filters,
+                                                               gboolean       rgb,
                                                                gboolean       run_async);
 
 
@@ -52,6 +55,7 @@ static GimpAsync *
 gimp_drawable_calculate_histogram_internal (GimpDrawable  *drawable,
                                             GimpHistogram *histogram,
                                             gboolean       with_filters,
+                                            gboolean       rgb,
                                             gboolean       run_async)
 {
   GimpAsync   *async = NULL;
@@ -163,6 +167,32 @@ gimp_drawable_calculate_histogram_internal (GimpDrawable  *drawable,
       if (projectable)
         gimp_projectable_begin_render (projectable);
 
+      if (rgb && gimp_drawable_is_cmyk (drawable))
+        {
+          /*  the histogram of the RGB conversion the color tools work
+           *  on: CMYK -> R'G'B'(A) in sRGB (INTERFACES §9, §10)
+           */
+          const GeglRectangle  rect = { x, y, width, height };
+          const Babl          *src_format = gegl_buffer_get_format (buffer);
+          const Babl          *rgb_format;
+          GeglBuffer          *rgb_buffer;
+
+          rgb_format =
+            gimp_babl_format (GIMP_RGB,
+                              gimp_babl_precision (gimp_babl_format_get_component_type (src_format),
+                                                   GIMP_TRC_NON_LINEAR),
+                              babl_format_has_alpha (src_format),
+                              NULL);
+
+          rgb_buffer = gegl_buffer_new (&rect, rgb_format);
+
+          gimp_gegl_buffer_copy (buffer, &rect, GEGL_ABYSS_NONE,
+                                 rgb_buffer, &rect);
+
+          g_object_unref (buffer);
+          buffer = rgb_buffer;
+        }
+
       if (! gimp_channel_is_empty (mask))
         {
           gint off_x, off_y;
@@ -238,7 +268,7 @@ gimp_drawable_calculate_histogram (GimpDrawable  *drawable,
 
   gimp_drawable_calculate_histogram_internal (drawable,
                                               histogram, with_filters,
-                                              FALSE);
+                                              FALSE, FALSE);
 }
 
 GimpAsync *
@@ -252,5 +282,54 @@ gimp_drawable_calculate_histogram_async (GimpDrawable  *drawable,
 
   return gimp_drawable_calculate_histogram_internal (drawable,
                                                      histogram, with_filters,
-                                                     TRUE);
+                                                     FALSE, TRUE);
+}
+
+/**
+ * gimp_drawable_calculate_histogram_rgb:
+ * @drawable:     a #GimpDrawable
+ * @histogram:    the #GimpHistogram to fill
+ * @with_filters: whether to include the drawable's filters
+ *
+ * Like gimp_drawable_calculate_histogram(), but for a CMYK @drawable
+ * the histogram of its RGB (sRGB) conversion is computed.  This is the
+ * data the color tools operate on for CMYK drawables.  For any other
+ * drawable this is gimp_drawable_calculate_histogram().
+ **/
+void
+gimp_drawable_calculate_histogram_rgb (GimpDrawable  *drawable,
+                                       GimpHistogram *histogram,
+                                       gboolean       with_filters)
+{
+  g_return_if_fail (GIMP_IS_DRAWABLE (drawable));
+  g_return_if_fail (gimp_item_is_attached (GIMP_ITEM (drawable)));
+  g_return_if_fail (histogram != NULL);
+
+  gimp_drawable_calculate_histogram_internal (drawable,
+                                              histogram, with_filters,
+                                              TRUE, FALSE);
+}
+
+/**
+ * gimp_drawable_calculate_histogram_rgb_async:
+ * @drawable:     a #GimpDrawable
+ * @histogram:    the #GimpHistogram to fill
+ * @with_filters: whether to include the drawable's filters
+ *
+ * Asynchronous variant of gimp_drawable_calculate_histogram_rgb().
+ *
+ * Returns: (transfer full): a #GimpAsync
+ **/
+GimpAsync *
+gimp_drawable_calculate_histogram_rgb_async (GimpDrawable  *drawable,
+                                             GimpHistogram *histogram,
+                                             gboolean       with_filters)
+{
+  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), NULL);
+  g_return_val_if_fail (gimp_item_is_attached (GIMP_ITEM (drawable)), NULL);
+  g_return_val_if_fail (histogram != NULL, NULL);
+
+  return gimp_drawable_calculate_histogram_internal (drawable,
+                                                     histogram, with_filters,
+                                                     TRUE, TRUE);
 }

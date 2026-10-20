@@ -48,6 +48,7 @@ struct _ColorselCmyk
   GimpColorSelector   parent_instance;
 
   GimpColorConfig          *config;
+  GimpColorProfile         *image_profile;
   GimpColorProfile         *simulation_profile;
   GimpColorRenderingIntent  simulation_intent;
   gboolean                  simulation_bpc;
@@ -73,6 +74,8 @@ static void   colorsel_cmyk_set_color      (GimpColorSelector *selector,
                                             GeglColor         *color);
 static void   colorsel_cmyk_set_config     (GimpColorSelector *selector,
                                             GimpColorConfig   *config);
+static void   colorsel_cmyk_set_format     (GimpColorSelector *selector,
+                                            const Babl        *format);
 static void   colorsel_cmyk_set_simulation (GimpColorSelector *selector,
                                             GimpColorProfile  *profile,
                                             GimpColorRenderingIntent intent,
@@ -126,6 +129,7 @@ colorsel_cmyk_class_init (ColorselCmykClass *klass)
   selector_class->set_color              = colorsel_cmyk_set_color;
   selector_class->set_config             = colorsel_cmyk_set_config;
   selector_class->set_simulation         = colorsel_cmyk_set_simulation;
+  selector_class->set_format             = colorsel_cmyk_set_format;
 
   gtk_widget_class_set_css_name (GTK_WIDGET_CLASS (klass), "ColorselCmyk");
 }
@@ -218,8 +222,116 @@ colorsel_cmyk_dispose (GObject *object)
 
   colorsel_cmyk_set_config (GIMP_COLOR_SELECTOR (object), NULL);
   g_clear_object (&module->simulation_profile);
+  g_clear_object (&module->image_profile);
 
   G_OBJECT_CLASS (colorsel_cmyk_parent_class)->dispose (object);
+}
+
+/*  The CMYK profile the selector works in, as a new reference (or NULL):
+ *  the active image's own profile when the image is CMYK (so the colors
+ *  it creates are in the image space and fill exactly), else the image's
+ *  soft-proofing profile, else the CMYK profile from the preferences.
+ */
+static GimpColorProfile *
+colorsel_cmyk_get_profile (ColorselCmyk *module)
+{
+  GimpColorProfile *profile = NULL;
+
+  if (module->image_profile)
+    return g_object_ref (module->image_profile);
+
+  if (module->simulation_profile)
+    profile = g_object_ref (module->simulation_profile);
+  else if (GIMP_IS_COLOR_CONFIG (module->config))
+    profile = gimp_color_config_get_cmyk_color_profile (GIMP_COLOR_CONFIG (module->config),
+                                                        NULL);
+
+  return profile;
+}
+
+static const Babl *
+colorsel_cmyk_get_space (ColorselCmyk     *module,
+                         GimpColorProfile *profile)
+{
+  if (! profile || ! gimp_color_profile_is_cmyk (profile))
+    return NULL;
+
+  /*  one babl space per equal CMYK profile (I8), so this is the image
+   *  space itself for the image profile; the intent is ignored for CMYK
+   */
+  return gimp_color_profile_get_space (profile, module->simulation_intent,
+                                       NULL);
+}
+
+static void
+colorsel_cmyk_update_label (ColorselCmyk     *module,
+                            GimpColorProfile *profile)
+{
+  gtk_label_set_text (GTK_LABEL (module->name_label), _("Profile: (none)"));
+  gimp_help_set_help_data (module->name_label, NULL, NULL);
+
+  if (profile && gimp_color_profile_is_cmyk (profile))
+    {
+      gchar *text;
+
+      text = g_strdup_printf (_("Profile: %s"),
+                              gimp_color_profile_get_label (profile));
+      gtk_label_set_text (GTK_LABEL (module->name_label), text);
+      g_free (text);
+
+      gimp_help_set_help_data (module->name_label,
+                               gimp_color_profile_get_summary (profile),
+                               NULL);
+    }
+}
+
+static void
+colorsel_cmyk_set_format (GimpColorSelector *selector,
+                          const Babl        *format)
+{
+  ColorselCmyk     *module  = COLORSEL_CMYK (selector);
+  GimpColorProfile *profile = NULL;
+  const Babl       *space   = format ? babl_format_get_space (format) : NULL;
+
+  if (space && babl_space_is_cmyk (space))
+    {
+      const gchar *icc;
+      gint         length;
+
+      icc = babl_space_get_icc (space, &length);
+
+      if (icc)
+        profile = gimp_color_profile_new_from_icc_profile ((const guint8 *) icc,
+                                                           length, NULL);
+    }
+
+  if (profile && module->image_profile &&
+      gimp_color_profile_is_equal (profile, module->image_profile))
+    {
+      g_object_unref (profile);
+      return;
+    }
+
+  if (! profile && ! module->image_profile)
+    return;
+
+  g_clear_object (&module->image_profile);
+  module->image_profile = profile;
+
+  {
+    GimpColorProfile *current = colorsel_cmyk_get_profile (module);
+
+    colorsel_cmyk_update_label (module, current);
+    g_clear_object (&current);
+  }
+
+  if (! module->in_destruction)
+    {
+      GeglColor *color = gimp_color_selector_get_color (selector);
+
+      colorsel_cmyk_set_color (selector, color);
+      g_object_unref (color);
+    }
 }
 
 static void
@@ -227,28 +339,17 @@ colorsel_cmyk_set_color (GimpColorSelector *selector,
                          GeglColor         *color)
 {
   GimpColorProfile         *cmyk_profile = NULL;
-  GimpColorRenderingIntent  intent       = GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
   const Babl               *space        = NULL;
   ColorselCmyk             *module       = COLORSEL_CMYK (selector);
   gfloat                    tic_val      = 0;
   gchar                    *tic_str;
   gfloat                    cmyk[4];
 
-  /* Try Image Soft-proofing profile first, then default CMYK profile */
-  if (module->simulation_profile)
-    cmyk_profile = module->simulation_profile;
-
-  if (! cmyk_profile && GIMP_IS_COLOR_CONFIG (module->config))
-    cmyk_profile = gimp_color_config_get_cmyk_color_profile (GIMP_COLOR_CONFIG (module->config),
-                                                             NULL);
-
-  if (cmyk_profile && gimp_color_profile_is_cmyk (cmyk_profile))
-    {
-      intent = module->simulation_intent;
-
-      space = gimp_color_profile_get_space (cmyk_profile, intent,
-                                            NULL);
-    }
+  /* The image's own CMYK profile first, then the image's soft-proofing
+   * profile, then the default CMYK profile
+   */
+  cmyk_profile = colorsel_cmyk_get_profile (module);
+  space        = colorsel_cmyk_get_space (module, cmyk_profile);
 
   gegl_color_get_pixel (color, babl_format_with_space ("CMYK float", space), cmyk);
 
@@ -272,8 +373,7 @@ colorsel_cmyk_set_color (GimpColorSelector *selector,
   gtk_label_set_text (GTK_LABEL (module->tic_label), tic_str);
   g_free (tic_str);
 
-  if (cmyk_profile && ! module->simulation_profile)
-    g_object_unref (cmyk_profile);
+  g_clear_object (&cmyk_profile);
 }
 
 static void
@@ -308,33 +408,15 @@ colorsel_cmyk_set_simulation (GimpColorSelector *selector,
 {
   ColorselCmyk     *module = COLORSEL_CMYK (selector);
   GimpColorProfile *cmyk_profile = NULL;
-  gchar            *text;
-
-  gtk_label_set_text (GTK_LABEL (module->name_label), _("Profile: (none)"));
-  gimp_help_set_help_data (module->name_label, NULL, NULL);
 
   g_set_object (&module->simulation_profile, profile);
 
-  cmyk_profile = module->simulation_profile;
-
-  if (! cmyk_profile && GIMP_IS_COLOR_CONFIG (module->config))
-    cmyk_profile = gimp_color_config_get_cmyk_color_profile (GIMP_COLOR_CONFIG (module->config),
-                                                             NULL);
-
-  if (cmyk_profile && gimp_color_profile_is_cmyk (cmyk_profile))
-    {
-      text = g_strdup_printf (_("Profile: %s"),
-                              gimp_color_profile_get_label (cmyk_profile));
-      gtk_label_set_text (GTK_LABEL (module->name_label), text);
-      g_free (text);
-
-      gimp_help_set_help_data (module->name_label,
-                              gimp_color_profile_get_summary (cmyk_profile),
-                              NULL);
-    }
-
   module->simulation_intent = intent;
   module->simulation_bpc    = bpc;
+
+  cmyk_profile = colorsel_cmyk_get_profile (module);
+  colorsel_cmyk_update_label (module, cmyk_profile);
+  g_clear_object (&cmyk_profile);
 
   if (! module->in_destruction)
     {
@@ -351,7 +433,6 @@ colorsel_cmyk_scale_update (GimpSpinScale *scale,
 {
   GimpColorProfile        *cmyk_profile = NULL;
   GimpColorSelector       *selector     = GIMP_COLOR_SELECTOR (module);
-  GimpColorRenderingIntent intent       = GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
   const Babl              *space        = NULL;
   GeglColor               *color        = gegl_color_new (NULL);
   gfloat                   cmyk_values[4];
@@ -359,25 +440,15 @@ colorsel_cmyk_scale_update (GimpSpinScale *scale,
   for (gint i = 0; i < 4; i++)
     cmyk_values[i] = gtk_spin_button_get_value (GTK_SPIN_BUTTON (module->scales[i])) / 100.0;
 
-  if (module->simulation_profile)
-    cmyk_profile = module->simulation_profile;
-
-  if (! cmyk_profile && GIMP_IS_COLOR_CONFIG (module->config))
-    cmyk_profile = gimp_color_config_get_cmyk_color_profile (GIMP_COLOR_CONFIG (module->config),
-                                                             NULL);
-  if (cmyk_profile)
-    {
-      intent = module->simulation_intent;
-
-      space = gimp_color_profile_get_space (cmyk_profile, intent, NULL);
-    }
+  /*  for a CMYK image this is the image space: the color is native  */
+  cmyk_profile = colorsel_cmyk_get_profile (module);
+  space        = colorsel_cmyk_get_space (module, cmyk_profile);
 
   gegl_color_set_pixel (color, babl_format_with_space ("CMYK float", space), cmyk_values);
   gimp_color_selector_set_color (selector, color);
   g_object_unref (color);
 
-  if (cmyk_profile && ! module->simulation_profile)
-    g_object_unref (cmyk_profile);
+  g_clear_object (&cmyk_profile);
 }
 
 static void
@@ -395,12 +466,7 @@ colorsel_cmyk_config_changed (ColorselCmyk *module)
   if (! config)
     goto out;
 
-  if (module->simulation_profile)
-    cmyk_profile = module->simulation_profile;
-
-  if (! cmyk_profile && GIMP_IS_COLOR_CONFIG (module->config))
-    cmyk_profile = gimp_color_config_get_cmyk_color_profile (GIMP_COLOR_CONFIG (module->config),
-                                                             NULL);
+  cmyk_profile = colorsel_cmyk_get_profile (module);
 
   if (! cmyk_profile)
     goto out;
@@ -421,8 +487,7 @@ colorsel_cmyk_config_changed (ColorselCmyk *module)
   if (rgb_profile)
     g_object_unref (rgb_profile);
 
-  if (cmyk_profile && ! module->simulation_profile)
-    g_object_unref (cmyk_profile);
+  g_clear_object (&cmyk_profile);
 
   if (! module->in_destruction)
     {

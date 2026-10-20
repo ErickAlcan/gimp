@@ -356,6 +356,15 @@ gimp_component_editor_create_components (GimpComponentEditor *editor)
       n_components  = 1;
       components[0] = GIMP_CHANNEL_INDEXED;
       break;
+
+    case GIMP_CMYK:
+      /*  D8: the channel value of a component is its ink amount  */
+      n_components  = 4;
+      components[0] = GIMP_CHANNEL_CYAN;
+      components[1] = GIMP_CHANNEL_MAGENTA;
+      components[2] = GIMP_CHANNEL_YELLOW;
+      components[3] = GIMP_CHANNEL_BLACK;
+      break;
     }
 
   if (gimp_image_has_alpha (image))

@@ -735,10 +735,15 @@ choose_format (GeglBuffer          *buffer,
       if (babl_format_is_palette (format))
         format = babl_format ("R'G'B'A float");
       else
+        /*  CMYK compares inks in the buffer's own space (PLAN §5): a
+         *  space-less CMYK format would convert RGB colors with babl's
+         *  naive formula.  RGB/GRAY keep comparing in sRGB as before.
+         */
         format = gimp_babl_format (gimp_babl_format_get_base_type (format),
                                    GIMP_PRECISION_FLOAT_NON_LINEAR,
                                    *has_alpha,
-                                   NULL);
+                                   gimp_babl_format_is_cmyk (format) ?
+                                   babl_format_get_space (format) : NULL);
       break;
 
     case GIMP_SELECT_CRITERION_RGB_RED:

@@ -839,6 +839,24 @@ gimp_color_frame_update (GimpColorFrame *frame)
               }
           }
 
+        else if (base_type == GIMP_CMYK)
+          {
+            /*  the native ink values of a CMYK pixel  */
+
+            /* TRANSLATORS: C for Cyan (CMYK) */
+            names[values_len++] = C_("CMYK", "C:");
+            /* TRANSLATORS: M for Magenta (CMYK) */
+            names[values_len++] = C_("CMYK", "M:");
+            /* TRANSLATORS: Y for Yellow (CMYK) */
+            names[values_len++] = C_("CMYK", "Y:");
+            /* TRANSLATORS: K for Key/black (CMYK) */
+            names[values_len++] = C_("CMYK", "K:");
+
+            if (has_alpha)
+              /* TRANSLATORS: A for Alpha (color transparency) */
+              names[values_len++] = C_("Alpha channel", "A:");
+          }
+
         if (frame->sample_valid && color_profile)
           {
             const gchar  *profile_label;
@@ -1135,15 +1153,26 @@ gimp_color_frame_update (GimpColorFrame *frame)
          * 2) Preferred CMYK Profile set in Preferences
          * 3) No CMYK Profile (Default Values)
          */
-        color_profile = frame->view_profile ? g_object_ref (frame->view_profile) : NULL;
+        if (gimp_babl_format_is_cmyk (format))
+          {
+            /*  a color picked from a CMYK image: show its own inks, in
+             *  its own (the image's) profile, not a simulation
+             */
+            color_profile = gimp_babl_format_get_color_profile (format);
+            space         = babl_format_get_space (format);
+          }
+        else
+          {
+            color_profile = frame->view_profile ? g_object_ref (frame->view_profile) : NULL;
 
-        if (! color_profile && frame->config)
-          color_profile = gimp_color_config_get_cmyk_color_profile (frame->config,
-                                                                    NULL);
-        if (color_profile)
-          space = gimp_color_profile_get_space (color_profile,
-                                                frame->simulation_intent,
-                                                NULL);
+            if (! color_profile && frame->config)
+              color_profile = gimp_color_config_get_cmyk_color_profile (frame->config,
+                                                                        NULL);
+            if (color_profile)
+              space = gimp_color_profile_get_space (color_profile,
+                                                    frame->simulation_intent,
+                                                    NULL);
+          }
 
         /* TRANSLATORS: C for Cyan (CMYK) */
         names[0] = C_("CMYK", "C:");

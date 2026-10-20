@@ -26,3 +26,11 @@ void        gimp_drawable_calculate_histogram       (GimpDrawable  *drawable,
 GimpAsync * gimp_drawable_calculate_histogram_async (GimpDrawable  *drawable,
                                                      GimpHistogram *histogram,
                                                      gboolean       with_filters);
+
+void        gimp_drawable_calculate_histogram_rgb   (GimpDrawable  *drawable,
+                                                     GimpHistogram *histogram,
+                                                     gboolean       with_filters);
+GimpAsync * gimp_drawable_calculate_histogram_rgb_async
+                                                    (GimpDrawable  *drawable,
+                                                     GimpHistogram *histogram,
+                                                     gboolean       with_filters);

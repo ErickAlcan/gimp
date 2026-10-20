@@ -231,6 +231,17 @@ gimp_operation_threshold_process (GeglOperation       *operation,
         case GIMP_HISTOGRAM_LUMINANCE:
           value = GIMP_RGB_LUMINANCE (src[RED], src[GREEN], src[BLUE]);
           break;
+
+        case GIMP_HISTOGRAM_CYAN:
+        case GIMP_HISTOGRAM_MAGENTA:
+        case GIMP_HISTOGRAM_YELLOW:
+        case GIMP_HISTOGRAM_BLACK:
+          /*  this op works on R'G'B'A (CMYK input arrives converted);
+           *  ink channels do not exist here, treat them like VALUE
+           */
+          value = MAX (src[RED], src[GREEN]);
+          value = MAX (value, src[BLUE]);
+          break;
         }
 
       value = (value >= threshold->low && value <= threshold->high) ? 1.0 : 0.0;

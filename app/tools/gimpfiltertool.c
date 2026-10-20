@@ -516,6 +516,17 @@ gimp_filter_tool_initialize (GimpTool     *tool,
       gtk_widget_set_visible (filter_tool->operation_settings_box, TRUE);
 
       gimp_filter_tool_update_dialog_operation_settings (filter_tool);
+
+      /*  D8: point filters (the color tools) see CMYK drawables as RGB  */
+      filter_tool->cmyk_label =
+        gtk_label_new (_("Operates on an RGB conversion of the CMYK data"));
+      gtk_label_set_line_wrap (GTK_LABEL (filter_tool->cmyk_label), TRUE);
+      gtk_label_set_xalign (GTK_LABEL (filter_tool->cmyk_label), 0.0);
+      gimp_label_set_attributes (GTK_LABEL (filter_tool->cmyk_label),
+                                 PANGO_ATTR_STYLE, PANGO_STYLE_ITALIC,
+                                 -1);
+      gtk_box_pack_end (GTK_BOX (vbox), filter_tool->cmyk_label,
+                        FALSE, FALSE, 0);
     }
   else
     {
@@ -1627,6 +1638,12 @@ gimp_filter_tool_update_dialog (GimpFilterTool *filter_tool)
           drawable = tool->drawables->data;
           format   = gimp_drawable_get_format (tool->drawables->data);
         }
+
+      if (filter_tool->cmyk_label)
+        gtk_widget_set_visible (
+          filter_tool->cmyk_label,
+          gimp_drawable_is_cmyk (drawable) &&
+          gimp_gegl_node_is_point_operation (filter_tool->operation));
 
       if (gimp_channel_is_empty (mask))
         {
