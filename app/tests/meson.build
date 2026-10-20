@@ -37,6 +37,7 @@ apptests_links += libapptestutils
 app_tests = [
   'core',
   'gimpidtable',
+  'layer-modes-golden',
 #'session-2-8-compatibility-multi-window',
 #'session-2-8-compatibility-single-window',
 #'single-window-mode',
