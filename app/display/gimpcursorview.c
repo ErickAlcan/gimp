@@ -760,7 +760,7 @@ gimp_cursor_view_cursor_idle (GimpCursorView *view)
       gboolean    in_image;
       gchar       buf[32];
       const Babl *sample_format;
-      gdouble     pixel[4];
+      gdouble     pixel[MAX_CHANNELS];
       GeglColor  *color;
       gdouble     xres;
       gdouble     yres;

@@ -1166,8 +1166,25 @@ gimp_view_renderer_get_color_transform (GimpViewRenderer *renderer,
       GimpColorManaged *managed = GIMP_COLOR_MANAGED (renderer->viewable);
 
       profile = gimp_color_managed_get_color_profile (managed);
+
+      /*  previews of CMYK images and drawables are sRGB R'G'B'(A) u8
+       *  (INTERFACES §10), so the viewable's CMYK profile is not the
+       *  profile of the preview pixels. Only a CMYK preview buffer
+       *  can be paired with a CMYK profile.
+       */
+      if (profile                            &&
+          gimp_color_profile_is_cmyk (profile) &&
+          ! gimp_babl_format_is_cmyk (src_format))
+        {
+          profile = NULL;
+        }
     }
   else
+    {
+      profile = NULL;
+    }
+
+  if (! profile)
     {
       static GimpColorProfile *srgb_profile = NULL;
 
@@ -1435,6 +1452,14 @@ gimp_view_render_temp_buf_to_surface (GimpViewRenderer *renderer,
 
         case GIMP_INDEXED:
           if (channel == ALPHA_I)
+            channel = ALPHA;
+          break;
+
+        case GIMP_CMYK:
+          /*  CMYK previews are R'G'B'A u8, the inks are rendered from
+           *  one-component buffers (see gimpviewrendererimage.c)
+           */
+          if (channel == ALPHA_C)
             channel = ALPHA;
           break;
         }

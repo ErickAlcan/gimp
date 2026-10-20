@@ -27,15 +27,23 @@
 
 #include "widgets-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "core/gimpimage.h"
+#include "core/gimppickable.h"
 #include "core/gimpimageproxy.h"
 #include "core/gimptempbuf.h"
 
 #include "gimpviewrendererimage.h"
 
 
-static void   gimp_view_renderer_image_render (GimpViewRenderer *renderer,
-                                               GtkWidget        *widget);
+static void          gimp_view_renderer_image_render  (GimpViewRenderer *renderer,
+                                                        GtkWidget        *widget);
+static GimpTempBuf * gimp_view_renderer_image_cmyk_component
+                                                       (GimpImage        *image,
+                                                        GimpChannelType   channel,
+                                                        gint              width,
+                                                        gint              height);
 
 
 G_DEFINE_TYPE (GimpViewRendererImage,
@@ -116,7 +124,19 @@ gimp_view_renderer_image_render (GimpViewRenderer *renderer,
                                        &view_height,
                                        &scaling_up);
 
-      if (scaling_up)
+      if (rendererimage->channel != -1            &&
+          rendererimage->channel != GIMP_CHANNEL_ALPHA &&
+          gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          /*  the image preview is sRGB (INTERFACES §10), CMYK components
+           *  can't be extracted from it
+           */
+          render_buf = gimp_view_renderer_image_cmyk_component (image,
+                                                                rendererimage->channel,
+                                                                view_width,
+                                                                view_height);
+        }
+      else if (scaling_up)
         {
           GimpTempBuf *temp_buf;
 
@@ -171,8 +191,11 @@ gimp_view_renderer_image_render (GimpViewRenderer *renderer,
 
           if (rendererimage->channel != -1)
             {
-              component_index =
-                gimp_image_get_component_index (image, rendererimage->channel);
+              if (babl_format_get_n_components (gimp_temp_buf_get_format (render_buf)) == 1)
+                component_index = 0;
+              else
+                component_index =
+                  gimp_image_get_component_index (image, rendererimage->channel);
 
               bg_style = GIMP_VIEW_BG_STYLE;
             }
@@ -207,4 +230,48 @@ gimp_view_renderer_image_render (GimpViewRenderer *renderer,
 
   gimp_view_renderer_render_icon (renderer, widget,
                                   icon_name, scale_factor);
+}
+
+/*  A one-component preview of a CMYK ink, as a gray buffer whose values
+ *  are the ink amounts (1.0 = 100 % ink renders like a full channel).
+ */
+static GimpTempBuf *
+gimp_view_renderer_image_cmyk_component (GimpImage       *image,
+                                         GimpChannelType  channel,
+                                         gint             width,
+                                         gint             height)
+{
+  const Babl  *component_format;
+  GimpTempBuf *temp_buf;
+  gdouble      scale;
+  gint         index;
+
+  index = gimp_image_get_component_index (image, channel);
+
+  if (index < 0 || index > BLACK || width < 1 || height < 1)
+    return NULL;
+
+  component_format =
+    gimp_babl_component_format (GIMP_CMYK, GIMP_PRECISION_U8_NON_LINEAR,
+                                index);
+  component_format =
+    babl_format_with_space (babl_get_name (component_format),
+                            gimp_image_get_layer_space (image));
+
+  scale = MIN ((gdouble) width  / (gdouble) gimp_image_get_width  (image),
+               (gdouble) height / (gdouble) gimp_image_get_height (image));
+
+  /*  the bytes are ink amounts, label them as gray so the renderer
+   *  draws them like any other channel
+   */
+  temp_buf = gimp_temp_buf_new (width, height, babl_format ("Y' u8"));
+
+  gegl_buffer_get (gimp_pickable_get_buffer (GIMP_PICKABLE (image)),
+                   GEGL_RECTANGLE (0, 0, width, height),
+                   scale,
+                   component_format,
+                   gimp_temp_buf_get_data (temp_buf),
+                   GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_CLAMP);
+
+  return temp_buf;
 }
