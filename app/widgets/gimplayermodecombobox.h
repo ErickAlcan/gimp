@@ -60,3 +60,9 @@ GimpLayerMode          gimp_layer_mode_combo_box_get_mode    (GimpLayerModeCombo
 void                   gimp_layer_mode_combo_box_set_group   (GimpLayerModeComboBox *combo,
                                                               GimpLayerModeGroup     group);
 GimpLayerModeGroup     gimp_layer_mode_combo_box_get_group   (GimpLayerModeComboBox *combo);
+
+void                   gimp_layer_mode_combo_box_set_allow_legacy
+                                                             (GimpLayerModeComboBox *combo,
+                                                              gboolean               allow_legacy);
+gboolean               gimp_layer_mode_combo_box_get_allow_legacy
+                                                             (GimpLayerModeComboBox *combo);

@@ -57,6 +57,12 @@ void                   gimp_layer_mode_box_set_mode      (GimpLayerModeBox     *
                                                           GimpLayerMode         mode);
 GimpLayerMode          gimp_layer_mode_box_get_mode      (GimpLayerModeBox     *box);
 
+void                   gimp_layer_mode_box_set_allow_legacy
+                                                         (GimpLayerModeBox     *box,
+                                                          gboolean              allow_legacy);
+gboolean               gimp_layer_mode_box_get_allow_legacy
+                                                         (GimpLayerModeBox     *box);
+
 void                   gimp_layer_mode_box_set_label     (GimpLayerModeBox     *box,
                                                           const gchar          *label);
 void                   gimp_layer_mode_box_set_ellipsize (GimpLayerModeBox     *box,

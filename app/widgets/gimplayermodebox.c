@@ -279,8 +279,27 @@ gimp_layer_mode_box_set_mode (GimpLayerModeBox *box,
         }
       else
         {
+          GimpLayerModeComboBox *combo_box;
+          GimpLayerMode          combo_mode;
+
           box->priv->layer_mode = mode;
           g_object_notify (G_OBJECT (box), "layer-mode");
+
+          /*  the combo may have mapped the mode (legacy modes when
+           *  they are not allowed), and the binding does not propagate
+           *  changes made while it propagates
+           */
+          if (box->priv->mode_combo)
+            {
+              combo_box  = GIMP_LAYER_MODE_COMBO_BOX (box->priv->mode_combo);
+              combo_mode = gimp_layer_mode_combo_box_get_mode (combo_box);
+
+              if (combo_mode != -1 && combo_mode != box->priv->layer_mode)
+                {
+                  box->priv->layer_mode = combo_mode;
+                  g_object_notify (G_OBJECT (box), "layer-mode");
+                }
+            }
         }
     }
 }
@@ -292,6 +311,35 @@ gimp_layer_mode_box_get_mode (GimpLayerModeBox *box)
                         GIMP_LAYER_MODE_NORMAL);
 
   return box->priv->layer_mode;
+}
+
+/**
+ * gimp_layer_mode_box_set_allow_legacy:
+ * @box:          a #GimpLayerModeBox
+ * @allow_legacy: whether legacy layer modes can be chosen
+ *
+ * Hides the legacy modes and the group switch when @allow_legacy is
+ * %FALSE (layers of CMYK images have no legacy modes).
+ **/
+void
+gimp_layer_mode_box_set_allow_legacy (GimpLayerModeBox *box,
+                                      gboolean          allow_legacy)
+{
+  g_return_if_fail (GIMP_IS_LAYER_MODE_BOX (box));
+
+  gimp_layer_mode_combo_box_set_allow_legacy (GIMP_LAYER_MODE_COMBO_BOX (box->priv->mode_combo),
+                                              allow_legacy);
+
+  gtk_widget_set_no_show_all (box->priv->group_combo, ! allow_legacy);
+  gtk_widget_set_visible (box->priv->group_combo, allow_legacy);
+}
+
+gboolean
+gimp_layer_mode_box_get_allow_legacy (GimpLayerModeBox *box)
+{
+  g_return_val_if_fail (GIMP_IS_LAYER_MODE_BOX (box), TRUE);
+
+  return gimp_layer_mode_combo_box_get_allow_legacy (GIMP_LAYER_MODE_COMBO_BOX (box->priv->mode_combo));
 }
 
 void
