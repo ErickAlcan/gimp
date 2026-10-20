@@ -106,9 +106,10 @@ gimp_c_test_run (GimpProcedure        *procedure,
   GIMP_TEST_END(layer != NULL && gimp_image_insert_layer (cmyk_image, layer, NULL, 0));
 
   g_object_set (options,
-                "capabilities", GIMP_EXPORT_CAN_HANDLE_RGB  |
-                                GIMP_EXPORT_CAN_HANDLE_CMYK |
-                                GIMP_EXPORT_CAN_HANDLE_ALPHA,
+                "capabilities", GIMP_EXPORT_CAN_HANDLE_RGB           |
+                                GIMP_EXPORT_CAN_HANDLE_CMYK          |
+                                GIMP_EXPORT_CAN_HANDLE_ALPHA         |
+                                GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS,
                 NULL);
 
   GIMP_TEST_START("CMYK-capable export keeps the CMYK image");

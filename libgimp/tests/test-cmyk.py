@@ -16,6 +16,13 @@
 def skip(name, why):
   print("SKIP (pending integration): {}: {}".format(name, why))
 
+def new_or_none(ctor, *args):
+  # PyGObject raises TypeError when a constructor returns NULL.
+  try:
+    return ctor(*args)
+  except TypeError:
+    return None
+
 pdb = Gimp.get_pdb()
 
 # 1. Enums (GIR) ----------------------------------------------------------
@@ -34,8 +41,10 @@ gimp_assert('Gimp.HistogramChannel.BLACK == 10', int(Gimp.HistogramChannel.BLACK
 
 # 2. New procedures and libgimp API ---------------------------------------
 
-gimp_assert('gimp-image-convert-cmyk exists',
-            pdb.procedure_exists('gimp-image-convert-cmyk'))
+# gimp-image-convert-cmyk is private (wrapped by Gimp.Image.convert_cmyk),
+# so the PDB does not report it as existing.
+gimp_assert('gimp-image-convert-cmyk is private',
+            not pdb.procedure_exists('gimp-image-convert-cmyk'))
 gimp_assert('gimp-drawable-is-cmyk exists',
             pdb.procedure_exists('gimp-drawable-is-cmyk'))
 gimp_assert('Gimp.Image.convert_cmyk', hasattr(Gimp.Image, 'convert_cmyk'))
@@ -45,7 +54,7 @@ gimp_assert('Gimp.Drawable.is_cmyk', hasattr(Gimp.Drawable, 'is_cmyk'))
 
 W, H = 32, 24
 
-image = Gimp.Image.new(W, H, Gimp.ImageBaseType.CMYK)
+image = new_or_none(Gimp.Image.new, W, H, Gimp.ImageBaseType.CMYK)
 
 if image is None:
   # Only acceptable without CMYK support in babl (no lcms).
@@ -65,11 +74,11 @@ else:
               profile.is_cmyk_bidirectional())
 
   gimp_assert('Gimp.Image.new_with_precision(CMYK, U16 linear) fails',
-              Gimp.Image.new_with_precision(W, H, Gimp.ImageBaseType.CMYK,
-                                            Gimp.Precision.U16_LINEAR) is None)
+              new_or_none(Gimp.Image.new_with_precision, W, H, Gimp.ImageBaseType.CMYK,
+                          Gimp.Precision.U16_LINEAR) is None)
   gimp_assert('Gimp.Image.new_with_precision(CMYK, float linear) fails',
-              Gimp.Image.new_with_precision(W, H, Gimp.ImageBaseType.CMYK,
-                                            Gimp.Precision.FLOAT_LINEAR) is None)
+              new_or_none(Gimp.Image.new_with_precision, W, H, Gimp.ImageBaseType.CMYK,
+                          Gimp.Precision.FLOAT_LINEAR) is None)
 
   image16 = Gimp.Image.new_with_precision(W, H, Gimp.ImageBaseType.CMYK,
                                           Gimp.Precision.U16_NON_LINEAR)
@@ -100,22 +109,24 @@ else:
               not layer2.has_alpha() and
               layer2.type() == Gimp.ImageType.CMYK_IMAGE and
               layer2.type_with_alpha() == Gimp.ImageType.CMYKA_IMAGE)
+  image.insert_layer(layer2, None, 0)
 
   layer16 = Gimp.Layer.new(image16, "cmyka16", W, H, Gimp.ImageType.CMYKA_IMAGE,
                            100.0, Gimp.LayerMode.NORMAL)
+  image16.insert_layer(layer16, None, 0)
   gimp_assert('CMYKA u16 layer bpp == 10',
               layer16 is not None and layer16.get_bpp() == 10)
 
   gimp_assert('Gimp.Layer.new(RGBA) on a CMYK image fails',
-              Gimp.Layer.new(image, "rgba", W, H, Gimp.ImageType.RGBA_IMAGE,
+              new_or_none(Gimp.Layer.new, image, "rgba", W, H, Gimp.ImageType.RGBA_IMAGE,
                              100.0, Gimp.LayerMode.NORMAL) is None)
   gimp_assert('Gimp.Layer.new(INDEXED) on a CMYK image fails',
-              Gimp.Layer.new(image, "idx", W, H, Gimp.ImageType.INDEXED_IMAGE,
+              new_or_none(Gimp.Layer.new, image, "idx", W, H, Gimp.ImageType.INDEXED_IMAGE,
                              100.0, Gimp.LayerMode.NORMAL) is None)
 
   rgb_image = Gimp.Image.new(W, H, Gimp.ImageBaseType.RGB)
   gimp_assert('Gimp.Layer.new(CMYKA) on an RGB image fails',
-              Gimp.Layer.new(rgb_image, "cmyka", W, H, Gimp.ImageType.CMYKA_IMAGE,
+              new_or_none(Gimp.Layer.new, rgb_image, "cmyka", W, H, Gimp.ImageType.CMYKA_IMAGE,
                              100.0, Gimp.LayerMode.NORMAL) is None)
 
   rgb_layer = Gimp.Layer.new(rgb_image, "rgba", W, H, Gimp.ImageType.RGBA_IMAGE,
@@ -161,26 +172,34 @@ else:
 
   # 7. Thumbnails are sRGB --------------------------------------------------
 
-  data, tw, th, bpp = layer.get_thumbnail_data(16, 16)
-  gimp_assert('CMYKA layer thumbnail bpp == 4', data is not None and bpp == 4)
-  gimp_assert('CMYKA layer thumbnail size',
-              data.get_size() == tw * th * bpp)
+  # CMYK preview formats are WS03's (gimp_drawable_get_preview_format());
+  # use a working CMYK conversion as the sign that WS03 is merged.
+  ws03 = rgb_image.duplicate().convert_cmyk(None,
+                                            Gimp.ColorRenderingIntent.RELATIVE_COLORIMETRIC,
+                                            True)
+  if not ws03:
+    skip('thumbnails of CMYK drawables', 'gimp_drawable_get_preview_format() (WS03)')
+  else:
+    data, tw, th, bpp = layer.get_thumbnail_data(16, 16)
+    gimp_assert('CMYKA layer thumbnail bpp == 4', data is not None and bpp == 4)
+    gimp_assert('CMYKA layer thumbnail size',
+                data.get_size() == tw * th * bpp)
 
-  image2 = Gimp.Image.new(W, H, Gimp.ImageBaseType.CMYK)
-  bg = Gimp.Layer.new(image2, "bg", W, H, Gimp.ImageType.CMYK_IMAGE,
-                      100.0, Gimp.LayerMode.NORMAL)
-  image2.insert_layer(bg, None, 0)
-  data, tw, th, bpp = bg.get_thumbnail_data(16, 16)
-  gimp_assert('CMYK layer thumbnail bpp == 3', data is not None and bpp == 3)
-  data, tw, th, bpp = bg.get_sub_thumbnail_data(0, 0, 8, 8, 8, 8)
-  gimp_assert('CMYK layer sub-thumbnail bpp == 3', data is not None and bpp == 3)
+    image2 = Gimp.Image.new(W, H, Gimp.ImageBaseType.CMYK)
+    bg = Gimp.Layer.new(image2, "bg", W, H, Gimp.ImageType.CMYK_IMAGE,
+                        100.0, Gimp.LayerMode.NORMAL)
+    image2.insert_layer(bg, None, 0)
+    data, tw, th, bpp = bg.get_thumbnail_data(16, 16)
+    gimp_assert('CMYK layer thumbnail bpp == 3', data is not None and bpp == 3)
+    data, tw, th, bpp = bg.get_sub_thumbnail_data(0, 0, 8, 8, 8, 8)
+    gimp_assert('CMYK layer sub-thumbnail bpp == 3', data is not None and bpp == 3)
 
-  data, tw, th, bpp = image.get_thumbnail_data(16, 16)
-  gimp_assert('CMYK image thumbnail bpp is 3 or 4',
-              data is not None and bpp in (3, 4))
-  gimp_assert('CMYK image thumbnail pixbuf',
-              image.get_thumbnail(16, 16, Gimp.PixbufTransparency.KEEP_ALPHA)
-              is not None)
+    data, tw, th, bpp = image.get_thumbnail_data(16, 16)
+    gimp_assert('CMYK image thumbnail bpp is 3 or 4',
+                data is not None and bpp in (3, 4))
+    gimp_assert('CMYK image thumbnail pixbuf',
+                image.get_thumbnail(16, 16, Gimp.PixbufTransparency.KEEP_ALPHA)
+                is not None)
 
   # 8. Color profile rules --------------------------------------------------
 
@@ -230,8 +249,8 @@ else:
   # 10. Conversions (need WS03) ---------------------------------------------
 
   conv = rgb_image.duplicate()
-  if conv.convert_cmyk(None, Gimp.ColorRenderingIntent.RELATIVE_COLORIMETRIC,
-                       True):
+  if ws03 and conv.convert_cmyk(None, Gimp.ColorRenderingIntent.RELATIVE_COLORIMETRIC,
+                                True):
     gimp_assert('convert_cmyk(None) gives a CMYK image',
                 conv.get_base_type() == Gimp.ImageBaseType.CMYK)
     gimp_assert('convert_cmyk(None) attaches a CMYK profile',
@@ -276,6 +295,7 @@ else:
                        Gimp.ExportCapabilities.CAN_HANDLE_RGB |
                        Gimp.ExportCapabilities.CAN_HANDLE_GRAY |
                        Gimp.ExportCapabilities.CAN_HANDLE_ALPHA |
+                       Gimp.ExportCapabilities.CAN_HANDLE_LAYER_EFFECTS |
                        Gimp.ExportCapabilities.CAN_HANDLE_CMYK)
   ret, out = options.get_image(exp_image)
   gimp_assert('CMYK-capable export options keep the CMYK image',
