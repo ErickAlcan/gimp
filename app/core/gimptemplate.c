@@ -114,6 +114,8 @@ static void      gimp_template_get_property (GObject      *object,
 static void      gimp_template_notify       (GObject      *object,
                                              GParamSpec   *pspec);
 
+static void      gimp_template_fix_cmyk_precision (GimpTemplate *template);
+
 
 G_DEFINE_TYPE_WITH_CODE (GimpTemplate, gimp_template, GIMP_TYPE_VIEWABLE,
                          G_ADD_PRIVATE (GimpTemplate)
@@ -323,9 +325,11 @@ gimp_template_set_property (GObject      *object,
       break;
     case PROP_BASE_TYPE:
       private->base_type = g_value_get_enum (value);
+      gimp_template_fix_cmyk_precision (GIMP_TEMPLATE (object));
       break;
     case PROP_PRECISION:
       private->precision = g_value_get_enum (value);
+      gimp_template_fix_cmyk_precision (GIMP_TEMPLATE (object));
       g_object_notify (object, "component-type");
       g_object_notify (object, "trc");
       break;
@@ -333,12 +337,14 @@ gimp_template_set_property (GObject      *object,
       private->precision =
         gimp_babl_precision (g_value_get_enum (value),
                              gimp_babl_trc (private->precision));
+      gimp_template_fix_cmyk_precision (GIMP_TEMPLATE (object));
       g_object_notify (object, "precision");
       break;
     case PROP_TRC:
       private->precision =
         gimp_babl_precision (gimp_babl_component_type (private->precision),
                              g_value_get_enum (value));
+      gimp_template_fix_cmyk_precision (GIMP_TEMPLATE (object));
       g_object_notify (object, "precision");
       break;
     case PROP_COLOR_PROFILE:
@@ -442,6 +448,24 @@ gimp_template_get_property (GObject    *object,
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
       break;
+    }
+}
+
+/*  I2: CMYK images only use non-linear precisions  */
+static void
+gimp_template_fix_cmyk_precision (GimpTemplate *template)
+{
+  GimpTemplatePrivate *private = GET_PRIVATE (template);
+
+  if (private->base_type == GIMP_CMYK &&
+      gimp_babl_trc (private->precision) != GIMP_TRC_NON_LINEAR)
+    {
+      private->precision =
+        gimp_babl_precision (gimp_babl_component_type (private->precision),
+                             GIMP_TRC_NON_LINEAR);
+
+      g_object_notify (G_OBJECT (template), "precision");
+      g_object_notify (G_OBJECT (template), "trc");
     }
 }
 
