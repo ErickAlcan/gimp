@@ -28,6 +28,7 @@ libapplayermodes_sources = files(
   'gimpoperationdissolve.c',
   'gimpoperationerase.c',
   'gimpoperationlayermode-blend.c',
+  'gimpoperationlayermode-cmyk.c',
   'gimpoperationlayermode-composite.c',
   'gimpoperationlayermode.c',
   'gimpoperationmerge.c',
@@ -50,6 +51,7 @@ libapplayermodes = static_library('applayermodes',
     cairo,
     gegl,
     gdk_pixbuf,
-    gexiv2
+    gexiv2,
+    lcms,
   ],
 )
