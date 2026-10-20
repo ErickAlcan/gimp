@@ -272,6 +272,8 @@ static void       gimp_layer_real_transform     (GimpLayer          *layer,
                                                  GimpTransformResize clip_result,
                                                  GimpProgress       *progress,
                                                  gboolean            push_undo);
+static GimpLayerMode gimp_layer_get_non_legacy_mode (GimpLayerMode    mode);
+
 static void       gimp_layer_real_convert_type  (GimpLayer          *layer,
                                                  GimpImage          *dest_image,
                                                  const Babl         *new_format,
@@ -1103,6 +1105,10 @@ gimp_layer_convert (GimpItem  *item,
     gimp_item_set_image (GIMP_ITEM (layer->mask), dest_image);
 
   GIMP_ITEM_CLASS (parent_class)->convert (item, dest_image, old_type);
+
+  /*  I9: no layer of a CMYK image has a legacy mode  */
+  if (new_base_type == GIMP_CMYK)
+    gimp_layer_map_legacy_mode (layer, FALSE);
 }
 
 static gboolean
@@ -1504,6 +1510,13 @@ gimp_layer_convert_type (GimpDrawable     *drawable,
         gimp_color_profile_get_space (dest_profile,
                                       GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
                                       NULL);
+    }
+  else if (gimp_babl_format_is_cmyk (new_format))
+    {
+      /*  I3: CMYK buffers always carry the image's CMYK space; without
+       *  a dest_profile the image's profile doesn't change
+       */
+      dest_space = gimp_image_get_layer_space (dest_image);
     }
 
   space_format = babl_format_with_space ((const gchar *) new_format, dest_space);
@@ -2114,14 +2127,19 @@ gimp_layer_real_convert_type (GimpLayer        *layer,
 
   if (dest_profile)
     {
+      GimpColorRenderingIntent intent;
+      gboolean                 bpc;
+
       if (! src_profile)
         src_profile =
           gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (layer));
 
+      /*  PERCEPTUAL + BPC unless an image type conversion says otherwise  */
+      _gimp_image_get_conversion_intent (dest_image, &intent, &bpc);
+
       gimp_gegl_convert_color_profile (src_buffer,  NULL, src_profile,
                                        dest_buffer, NULL, dest_profile,
-                                       GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
-                                       TRUE, progress);
+                                       intent, bpc, progress);
     }
   else
     {
@@ -2207,6 +2225,43 @@ gimp_layer_exit_mask (GimpLoadState  *state,
   gimp_savable_load_bubble_up (state, "layer-mask:show");
 
   return TRUE;
+}
+
+
+/*  TODO: replace by gimp_layer_mode_get_non_legacy() (INTERFACES §8.2,
+ *  owner 02) once that is merged; this is the same mapping
+ */
+static GimpLayerMode
+gimp_layer_get_non_legacy_mode (GimpLayerMode mode)
+{
+  switch (mode)
+    {
+    case GIMP_LAYER_MODE_NORMAL_LEGACY:         return GIMP_LAYER_MODE_NORMAL;
+    case GIMP_LAYER_MODE_BEHIND_LEGACY:         return GIMP_LAYER_MODE_BEHIND;
+    case GIMP_LAYER_MODE_MULTIPLY_LEGACY:       return GIMP_LAYER_MODE_MULTIPLY;
+    case GIMP_LAYER_MODE_SCREEN_LEGACY:         return GIMP_LAYER_MODE_SCREEN;
+    case GIMP_LAYER_MODE_OVERLAY_LEGACY:        return GIMP_LAYER_MODE_OVERLAY;
+    case GIMP_LAYER_MODE_DIFFERENCE_LEGACY:     return GIMP_LAYER_MODE_DIFFERENCE;
+    case GIMP_LAYER_MODE_ADDITION_LEGACY:       return GIMP_LAYER_MODE_ADDITION;
+    case GIMP_LAYER_MODE_SUBTRACT_LEGACY:       return GIMP_LAYER_MODE_SUBTRACT;
+    case GIMP_LAYER_MODE_DARKEN_ONLY_LEGACY:    return GIMP_LAYER_MODE_DARKEN_ONLY;
+    case GIMP_LAYER_MODE_LIGHTEN_ONLY_LEGACY:   return GIMP_LAYER_MODE_LIGHTEN_ONLY;
+    case GIMP_LAYER_MODE_HSV_HUE_LEGACY:        return GIMP_LAYER_MODE_HSV_HUE;
+    case GIMP_LAYER_MODE_HSV_SATURATION_LEGACY: return GIMP_LAYER_MODE_HSV_SATURATION;
+    case GIMP_LAYER_MODE_HSL_COLOR_LEGACY:      return GIMP_LAYER_MODE_HSL_COLOR;
+    case GIMP_LAYER_MODE_HSV_VALUE_LEGACY:      return GIMP_LAYER_MODE_HSV_VALUE;
+    case GIMP_LAYER_MODE_DIVIDE_LEGACY:         return GIMP_LAYER_MODE_DIVIDE;
+    case GIMP_LAYER_MODE_DODGE_LEGACY:          return GIMP_LAYER_MODE_DODGE;
+    case GIMP_LAYER_MODE_BURN_LEGACY:           return GIMP_LAYER_MODE_BURN;
+    case GIMP_LAYER_MODE_HARDLIGHT_LEGACY:      return GIMP_LAYER_MODE_HARDLIGHT;
+    case GIMP_LAYER_MODE_SOFTLIGHT_LEGACY:      return GIMP_LAYER_MODE_SOFTLIGHT;
+    case GIMP_LAYER_MODE_GRAIN_EXTRACT_LEGACY:  return GIMP_LAYER_MODE_GRAIN_EXTRACT;
+    case GIMP_LAYER_MODE_GRAIN_MERGE_LEGACY:    return GIMP_LAYER_MODE_GRAIN_MERGE;
+    case GIMP_LAYER_MODE_COLOR_ERASE_LEGACY:    return GIMP_LAYER_MODE_COLOR_ERASE;
+
+    default:
+      return mode;
+    }
 }
 
 
@@ -3011,7 +3066,15 @@ gimp_layer_set_mode (GimpLayer     *layer,
                      GimpLayerMode  mode,
                      gboolean       push_undo)
 {
+  GimpImage *image;
+
   g_return_if_fail (GIMP_IS_LAYER (layer));
+
+  /*  I9: no layer of a CMYK image has a legacy mode  */
+  image = gimp_item_get_image (GIMP_ITEM (layer));
+
+  if (image && gimp_image_get_base_type (image) == GIMP_CMYK)
+    mode = gimp_layer_get_non_legacy_mode (mode);
 
   if (gimp_viewable_get_children (GIMP_VIEWABLE (layer)) == NULL)
     {
@@ -3075,6 +3138,36 @@ gimp_layer_set_mode (GimpLayer     *layer,
       gimp_layer_update_effective_mode (layer);
       gimp_layer_update_excludes_backdrop (layer);
     }
+}
+
+/**
+ * gimp_layer_map_legacy_mode:
+ * @layer:     a #GimpLayer
+ * @push_undo: whether to push an undo step
+ *
+ * Replaces a legacy layer mode of @layer by its non-legacy equivalent
+ * (I9: no layer of a CMYK image has a legacy mode), regardless of the
+ * image's base type.  Used before converting an image to CMYK and
+ * when a layer is moved into a CMYK image.
+ *
+ * Returns: %TRUE if the mode was changed.
+ **/
+gboolean
+gimp_layer_map_legacy_mode (GimpLayer *layer,
+                            gboolean   push_undo)
+{
+  GimpLayerMode mode;
+
+  g_return_val_if_fail (GIMP_IS_LAYER (layer), FALSE);
+
+  mode = gimp_layer_get_non_legacy_mode (layer->mode);
+
+  if (mode == layer->mode)
+    return FALSE;
+
+  gimp_layer_set_mode (layer, mode, push_undo);
+
+  return TRUE;
 }
 
 GimpLayerMode
