@@ -21,6 +21,7 @@
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
 
 #include <lcms2.h>
@@ -56,11 +57,15 @@
 #include "gimp-app-test-utils.h"
 
 
-/*  SHA-256 of the builtin CMYK profile bytes.  WS01a: the 3^4/3^3 stub;
- *  WS01b updates it once for the final profile.
+#ifndef TYPE_CMYKA_16
+#define TYPE_CMYKA_16 (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(2))
+#endif
+
+/*  SHA-256 of the builtin CMYK profile bytes (final 9^4/17^3 profile,
+ *  WS01b; the 01a stub was f900f7ab...16263).
  */
 #define BUILTIN_CMYK_SHA256 \
-  "f900f7abb4d0cf692efe659836644d6f6221b0998d641ff93c175ae5e4116263"
+  "864a65a0c8b1bcc4e2186fec9e9c81c3950f102564e805c6822e27e20bda9307"
 
 
 static Gimp *gimp = NULL;
@@ -279,7 +284,7 @@ f2_cmyk_support (void)
 }
 
 
-/*  F3: builtin profile (stub checks; WS01b adds the babl round trip)  */
+/*  F3: builtin profile  */
 
 static void
 f3_builtin_profile (void)
@@ -339,6 +344,33 @@ f3_builtin_profile (void)
   lcms_cmyk_to_srgb (profile1, paper, rgb);
   for (i = 0; i < 3; i++)
     g_assert_cmpfloat_with_epsilon (rgb[i], 1.0, 1.0 / 255.0);
+
+  /* babl K100 round trip (babl: relcol + BPC): K stays K */
+  {
+    const Babl  *space;
+    const gfloat k100f[4] = { 0.0, 0.0, 0.0, 1.0 };
+    gfloat       rgbf[3];
+    gfloat       back[4];
+
+    space = gimp_color_profile_get_space (profile1,
+                                          GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                          NULL);
+    g_assert_nonnull (space);
+
+    babl_process (babl_fish (babl_format_with_space ("CMYK float",   space),
+                             babl_format_with_space ("R'G'B' float", space)),
+                  k100f, rgbf, 1);
+    babl_process (babl_fish (babl_format_with_space ("R'G'B' float", space),
+                             babl_format_with_space ("CMYK float",   space)),
+                  rgbf, back, 1);
+
+    g_test_message ("babl K100 round trip: %.4f %.4f %.4f %.4f",
+                    back[0], back[1], back[2], back[3]);
+
+    g_assert_cmpfloat (back[3], >=, 0.98);
+    for (i = 0; i < 3; i++)
+      g_assert_cmpfloat (back[i], <=, 0.05);
+  }
 
   g_object_unref (profile1);
   g_object_unref (profile2);
@@ -711,24 +743,544 @@ f8_canonical_space (void)
 }
 
 
-/*  F9-F11: WS01b  */
+/*  F9: transform identity for equal CMYK profiles (B1)  */
+
+static void
+check_identity_transform (GimpColorProfile *src_profile,
+                          GimpColorProfile *dest_profile,
+                          const gchar      *src_encoding,
+                          const gchar      *dest_encoding)
+{
+  static const gdouble  patches[][5] = { { 0.0, 0.0, 0.0, 1.0, 1.0 },
+                                         { 0.1, 0.2, 0.3, 0.4, 1.0 },
+                                         { 1.0, 0.0, 0.0, 0.0, 1.0 },
+                                         { 0.0, 0.0, 0.0, 0.0, 0.5 } };
+  const gint            n = G_N_ELEMENTS (patches);
+  const Babl           *src_format;
+  const Babl           *dest_format;
+  GimpColorTransform   *transform;
+  guint8                src[G_N_ELEMENTS (patches) * 5 * 8];
+  guint8                dest[G_N_ELEMENTS (patches) * 5 * 8];
+  guint8                expected[G_N_ELEMENTS (patches) * 5 * 8];
+  gint                  bpp;
+
+  src_format  = gimp_color_profile_get_format (src_profile,
+                                               babl_format (src_encoding),
+                                               GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                               NULL);
+  dest_format = gimp_color_profile_get_format (dest_profile,
+                                               babl_format (dest_encoding),
+                                               GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                               NULL);
+  g_assert_nonnull (src_format);
+  g_assert_nonnull (dest_format);
+
+  /* the same pixels, without any color space: pure re-encoding */
+  babl_process (babl_fish (babl_format ("CMYKA double"),
+                           babl_format (src_encoding)),
+                patches, src, n);
+  babl_process (babl_fish (babl_format (src_encoding),
+                           babl_format (dest_encoding)),
+                src, expected, n);
+
+  transform = gimp_color_transform_new (src_profile,  src_format,
+                                        dest_profile, dest_format,
+                                        GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                        GIMP_COLOR_TRANSFORM_FLAGS_BLACK_POINT_COMPENSATION);
+  g_assert_nonnull (transform);
+
+  memset (dest, 0, sizeof (dest));
+  gimp_color_transform_process_pixels (transform,
+                                       src_format,  src,
+                                       dest_format, dest,
+                                       n);
+
+  bpp = babl_format_get_bytes_per_pixel (dest_format);
+  g_assert_true (memcmp (dest, expected, n * bpp) == 0);
+
+  /* and through a buffer */
+  {
+    GeglBuffer *src_buffer;
+    GeglBuffer *dest_buffer;
+
+    src_buffer  = gegl_buffer_linear_new_from_data (src, src_format,
+                                                    GEGL_RECTANGLE (0, 0, n, 1),
+                                                    GEGL_AUTO_ROWSTRIDE,
+                                                    NULL, NULL);
+    dest_buffer = gegl_buffer_new (GEGL_RECTANGLE (0, 0, n, 1), dest_format);
+
+    gimp_color_transform_process_buffer (transform,
+                                         src_buffer,  NULL,
+                                         dest_buffer, NULL);
+
+    memset (dest, 0, sizeof (dest));
+    gegl_buffer_get (dest_buffer, GEGL_RECTANGLE (0, 0, n, 1), 1.0,
+                     dest_format, dest,
+                     GEGL_AUTO_ROWSTRIDE, GEGL_ABYSS_NONE);
+    g_assert_true (memcmp (dest, expected, n * bpp) == 0);
+
+    g_object_unref (dest_buffer);
+    g_object_unref (src_buffer);
+  }
+
+  g_object_unref (transform);
+}
+
+static void
+f9_check_identity (GimpColorProfile *builtin,
+                   GimpColorProfile *variant)
+{
+  check_identity_transform (builtin, variant, "CMYK u16",    "CMYK u16");
+  check_identity_transform (variant, builtin, "CMYK u16",    "CMYK u16");
+  check_identity_transform (builtin, variant, "CMYKA float", "CMYKA u16");
+  check_identity_transform (builtin, builtin, "CMYKA u16",   "CMYKA u16");
+  check_identity_transform (builtin, variant, "CMYKA u8",    "CMYKA double");
+}
 
 static void
 f9_transform_identity (void)
 {
-  g_test_skip ("F9 transform identity: WS01b");
+  GimpColorProfile   *builtin;
+  GimpColorProfile   *variant;
+  GimpColorProfile   *other;
+  GimpColorProfile   *input_only;
+  GimpColorProfile   *srgb;
+  GimpColorTransform *transform;
+  gchar              *saved_env;
+
+  builtin    = gimp_color_profile_new_cmyk_builtin ();
+  variant    = gimp_test_utils_cmyk_header_variant (builtin);
+  other      = other_cmyk_profile ();
+  input_only = gimp_test_utils_cmyk_input_only_profile ();
+  srgb       = gimp_color_profile_new_rgb_srgb ();
+
+  g_assert_true (gimp_color_profile_is_equal (builtin, variant));
+
+  f9_check_identity (builtin, variant);
+
+  saved_env = g_strdup (g_getenv ("GIMP_COLOR_TRANSFORM_DISABLE_BABL"));
+  g_setenv ("GIMP_COLOR_TRANSFORM_DISABLE_BABL", "1", TRUE);
+
+  f9_check_identity (builtin, variant);
+
+  if (saved_env)
+    g_setenv ("GIMP_COLOR_TRANSFORM_DISABLE_BABL", saved_env, TRUE);
+  else
+    g_unsetenv ("GIMP_COLOR_TRANSFORM_DISABLE_BABL");
+  g_free (saved_env);
+
+  /* can_gegl_copy */
+  g_assert_true  (gimp_color_transform_can_gegl_copy (builtin, variant));
+  g_assert_true  (gimp_color_transform_can_gegl_copy (builtin, builtin));
+  g_assert_false (gimp_color_transform_can_gegl_copy (builtin, other));
+  g_assert_false (gimp_color_transform_can_gegl_copy (other,   builtin));
+  g_assert_false (gimp_color_transform_can_gegl_copy (builtin, srgb));
+  g_assert_false (gimp_color_transform_can_gegl_copy (srgb,    builtin));
+  g_assert_false (gimp_color_transform_can_gegl_copy (builtin, input_only));
+
+  /* different CMYK profiles: an lcms transform */
+  transform = gimp_color_transform_new (builtin, babl_format ("CMYKA u16"),
+                                        other,   babl_format ("CMYKA u16"),
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        GIMP_COLOR_TRANSFORM_FLAGS_BLACK_POINT_COMPENSATION);
+  g_assert_nonnull (transform);
+  g_object_unref (transform);
+
+  /* an input-only CMYK target fails cleanly, also from RGB */
+  transform = gimp_color_transform_new (builtin,    babl_format ("CMYKA u16"),
+                                        input_only, babl_format ("CMYKA u16"),
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        0);
+  g_assert_null (transform);
+
+  transform = gimp_color_transform_new (srgb,       babl_format ("R'G'B'A float"),
+                                        input_only, babl_format ("CMYKA float"),
+                                        GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                        0);
+  g_assert_null (transform);
+
+  /* but it works as a source */
+  transform = gimp_color_transform_new (input_only, babl_format ("CMYKA float"),
+                                        srgb,       babl_format ("R'G'B'A float"),
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        0);
+  g_assert_nonnull (transform);
+  g_object_unref (transform);
+
+  g_object_unref (srgb);
+  g_object_unref (input_only);
+  g_object_unref (other);
+  g_object_unref (variant);
+  g_object_unref (builtin);
 }
+
+
+/*  F9b: CMYK -> CMYK convert / assign in the core  */
+
+static void
+f9b_convert_assign (void)
+{
+  static const gdouble  patches[][5] = { { 0.0, 0.0, 0.0, 1.0, 1.0 },
+                                         { 0.1, 0.2, 0.3, 0.4, 1.0 },
+                                         { 1.0, 0.0, 0.0, 0.0, 1.0 },
+                                         { 0.3, 0.6, 0.9, 0.0, 0.5 } };
+  const gint            n = G_N_ELEMENTS (patches);
+  GimpColorProfile     *builtin;
+  GimpColorProfile     *variant;
+  GimpColorProfile     *other;
+  GimpImage            *image;
+  GimpLayer            *layer;
+  GeglBuffer           *buffer;
+  const Babl           *format;
+  guint16              *before;
+  guint16              *after;
+  guint16               expected[G_N_ELEMENTS (patches) * 5];
+  GError               *error = NULL;
+  gint                  i;
+
+  builtin = gimp_color_profile_new_cmyk_builtin ();
+  variant = gimp_test_utils_cmyk_header_variant (builtin);
+  other   = other_cmyk_profile ();
+
+  image = gimp_test_utils_create_cmyk_image (gimp, n, 1,
+                                             GIMP_PRECISION_U16_NON_LINEAR,
+                                             builtin);
+  layer = gimp_test_utils_add_cmyk_layer (image, "patches", TRUE, NULL);
+  buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
+
+  for (i = 0; i < n; i++)
+    gimp_test_utils_write_cmyk_patch (buffer, GEGL_RECTANGLE (i, 0, 1, 1),
+                                      patches[i]);
+
+  format = gimp_image_get_layer_format (image, TRUE);
+  before = gimp_test_utils_read_patch (buffer, GEGL_RECTANGLE (0, 0, n, 1),
+                                       format);
+
+  /* equal profile: no-op */
+  g_assert_true (gimp_image_convert_color_profile (image, variant,
+                                                   GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                                   TRUE, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_true (gimp_color_profile_is_equal (gimp_image_get_color_profile (image),
+                                              builtin));
+
+  /* different profile: lcms with intent and BPC */
+  {
+    cmsHTRANSFORM ref;
+
+    ref = cmsCreateTransform (gimp_color_profile_get_lcms_profile (builtin),
+                              TYPE_CMYKA_16,
+                              gimp_color_profile_get_lcms_profile (other),
+                              TYPE_CMYKA_16,
+                              INTENT_RELATIVE_COLORIMETRIC,
+                              cmsFLAGS_BLACKPOINTCOMPENSATION |
+                              cmsFLAGS_NOOPTIMIZE             |
+                              cmsFLAGS_COPY_ALPHA);
+    g_assert_nonnull (ref);
+    cmsDoTransform (ref, before, expected, n);
+    cmsDeleteTransform (ref);
+  }
+
+  g_assert_true (gimp_image_convert_color_profile (image, other,
+                                                   GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                                   TRUE, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_true (gimp_color_profile_is_equal (gimp_image_get_color_profile (image),
+                                              other));
+
+  layer  = GIMP_LAYER (gimp_image_get_layer_iter (image)->data);
+  buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
+  format = gimp_drawable_get_format (GIMP_DRAWABLE (layer));
+
+  g_assert_true (babl_format_get_space (format) ==
+                 gimp_color_profile_get_space (other,
+                                               GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                               NULL));
+
+  after = gimp_test_utils_read_patch (buffer, GEGL_RECTANGLE (0, 0, n, 1),
+                                      format);
+  for (i = 0; i < n * 5; i++)
+    g_assert_cmpint (ABS ((gint) after[i] - (gint) expected[i]), <=, 1);
+  g_free (after);
+
+  /* undo restores profile and pixels */
+  gimp_image_undo (image);
+  g_assert_true (gimp_color_profile_is_equal (gimp_image_get_color_profile (image),
+                                              builtin));
+  layer  = GIMP_LAYER (gimp_image_get_layer_iter (image)->data);
+  buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
+  after  = gimp_test_utils_read_patch (buffer, GEGL_RECTANGLE (0, 0, n, 1),
+                                       gimp_drawable_get_format (GIMP_DRAWABLE (layer)));
+  g_assert_true (memcmp (after, before, n * 5 * sizeof (guint16)) == 0);
+  g_free (after);
+
+  /* assign: relabel, the ink values stay */
+  g_assert_true (gimp_image_assign_color_profile (image, other, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_true (gimp_color_profile_is_equal (gimp_image_get_color_profile (image),
+                                              other));
+  layer  = GIMP_LAYER (gimp_image_get_layer_iter (image)->data);
+  format = gimp_drawable_get_format (GIMP_DRAWABLE (layer));
+  g_assert_true (babl_format_get_space (format) ==
+                 gimp_color_profile_get_space (other,
+                                               GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                               NULL));
+  after = gimp_test_utils_read_patch (gimp_drawable_get_buffer (GIMP_DRAWABLE (layer)),
+                                      GEGL_RECTANGLE (0, 0, n, 1), format);
+  g_assert_true (memcmp (after, before, n * 5 * sizeof (guint16)) == 0);
+  g_free (after);
+
+  /* assign NULL: the default CMYK profile (I1) */
+  g_assert_true (gimp_image_assign_color_profile (image, NULL, NULL, &error));
+  g_assert_no_error (error);
+  g_assert_true (gimp_color_profile_is_cmyk_bidirectional (gimp_image_get_color_profile (image)));
+
+  /* an RGB profile is refused */
+  {
+    GimpColorProfile *srgb = gimp_color_profile_new_rgb_srgb ();
+
+    g_assert_false (gimp_image_convert_color_profile (image, srgb,
+                                                      GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                                      TRUE, NULL, &error));
+    g_assert_nonnull (error);
+    g_clear_error (&error);
+    g_object_unref (srgb);
+  }
+
+  /* sRGB transforms of the image */
+  {
+    GimpColorTransform *transform;
+    guint8              rgba[4];
+    const guint16       k100[5] = { 0, 0, 0, 65535, 65535 };
+
+    g_assert_nonnull (gimp_image_get_color_transform_to_srgb_double (image));
+    g_assert_nonnull (gimp_image_get_color_transform_from_srgb_double (image));
+
+    transform = gimp_image_get_color_transform_to_srgb_u8 (image);
+    g_assert_nonnull (transform);
+
+    gimp_color_transform_process_pixels (transform,
+                                         babl_format ("CMYKA u16"), k100,
+                                         babl_format ("R'G'B'A u8"), rgba,
+                                         1);
+    /* perceptual + BPC on a v4 profile: lcms maps K100 to the v4
+     * perceptual reference black (L* ~ 3, about 12/255), neutral and no
+     * lighter than the relcol black point (0.08)
+     */
+    g_test_message ("K100 -> sRGB u8 (perceptual, BPC): %d %d %d",
+                    rgba[0], rgba[1], rgba[2]);
+    g_assert_cmpint (rgba[0], <=, 0.09 * 255);
+    g_assert_cmpint (ABS (rgba[0] - rgba[1]), <=, 2);
+    g_assert_cmpint (ABS (rgba[0] - rgba[2]), <=, 2);
+    g_assert_cmpint (rgba[3], ==, 255);
+  }
+
+  g_free (before);
+  g_object_unref (image);
+  g_object_unref (other);
+  g_object_unref (variant);
+  g_object_unref (builtin);
+}
+
+
+/*  F10: babl contract (I5)  */
 
 static void
 f10_babl_contract (void)
 {
-  g_test_skip ("F10 babl contract: WS01b");
+  GimpColorProfile *builtin;
+  const Babl       *space;
+  GRand            *rand;
+  const gint        n = 1000;
+  guint16          *pixels;
+  guint16          *result;
+  gfloat           *rgba;
+  gfloat           *rgba_result;
+  gint              i;
+
+  builtin = gimp_color_profile_new_cmyk_builtin ();
+  space   = gimp_color_profile_get_space (builtin,
+                                          GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                          NULL);
+  g_assert_nonnull (space);
+  g_assert_true (babl_space_is_cmyk (space));
+
+  rand = g_rand_new_with_seed (4711);
+
+  pixels      = g_new (guint16, n * 5);
+  result      = g_new (guint16, n * 5);
+  rgba        = g_new (gfloat,  n * 4);
+  rgba_result = g_new (gfloat,  n * 4);
+
+  for (i = 0; i < n * 5; i++)
+    pixels[i] = g_rand_int_range (rand, 0, 65536);
+
+  for (i = 0; i < n * 4; i++)
+    rgba[i] = g_rand_double (rand);
+
+  /* CMYKA u16 without space <-> with the CMYK space: identity */
+  babl_process (babl_fish (babl_format ("CMYKA u16"),
+                           babl_format_with_space ("CMYKA u16", space)),
+                pixels, result, n);
+  g_assert_true (memcmp (pixels, result, n * 5 * sizeof (guint16)) == 0);
+
+  babl_process (babl_fish (babl_format_with_space ("CMYKA u16", space),
+                           babl_format ("CMYKA u16")),
+                pixels, result, n);
+  g_assert_true (memcmp (pixels, result, n * 5 * sizeof (guint16)) == 0);
+
+  /* R'G'B'A float tagged with a CMYK space means sRGB */
+  babl_process (babl_fish (babl_format_with_space ("R'G'B'A float", space),
+                           babl_format ("R'G'B'A float")),
+                rgba, rgba_result, n);
+  for (i = 0; i < n * 4; i++)
+    g_assert_cmpfloat_with_epsilon (rgba_result[i], rgba[i], 1e-6);
+
+  babl_process (babl_fish (babl_format ("R'G'B'A float"),
+                           babl_format_with_space ("R'G'B'A float", space)),
+                rgba, rgba_result, n);
+  for (i = 0; i < n * 4; i++)
+    g_assert_cmpfloat_with_epsilon (rgba_result[i], rgba[i], 1e-6);
+
+  g_free (rgba_result);
+  g_free (rgba);
+  g_free (result);
+  g_free (pixels);
+  g_rand_free (rand);
+  g_object_unref (builtin);
+}
+
+
+/*  F11: lcms format mapping  */
+
+static void
+f11_check_format (GimpColorProfile *profile,
+                  cmsHTRANSFORM     reference,
+                  const gchar      *encoding)
+{
+  static const gdouble  patches[][5] = { { 0.0,  0.0,  0.0, 0.0, 1.0 },
+                                         { 0.0,  0.0,  0.0, 1.0, 1.0 },
+                                         { 1.0,  0.0,  0.0, 0.0, 1.0 },
+                                         { 0.1,  0.2,  0.3, 0.4, 1.0 },
+                                         { 0.5,  0.5,  0.5, 0.5, 0.5 },
+                                         { 0.25, 0.75, 0.0, 0.1, 0.25 } };
+  const gint            n = G_N_ELEMENTS (patches);
+  GimpColorProfile     *srgb;
+  GimpColorTransform   *transform;
+  const Babl           *format;
+  const Babl           *lcms_format;
+  guint32               lcms_type = 0;
+  guint8                pixels[G_N_ELEMENTS (patches) * 5 * 8];
+  gdouble               quantized[G_N_ELEMENTS (patches)][5];
+  gdouble               rgba[G_N_ELEMENTS (patches) * 4];
+  const Babl           *rgb_format;
+  gint                  rgb_n;
+  gboolean              has_alpha;
+  gint                  i, j;
+
+  format    = babl_format (encoding);
+  has_alpha = babl_format_has_alpha (format);
+
+  /* lcms only copies alpha if both sides have it */
+  rgb_format = babl_format (has_alpha ? "R'G'B'A double" : "R'G'B' double");
+  rgb_n      = has_alpha ? 4 : 3;
+
+  /* the mapping itself */
+  lcms_format = gimp_color_profile_get_lcms_format (format, &lcms_type);
+  g_assert_nonnull (lcms_format);
+  g_assert_cmpint (T_COLORSPACE (lcms_type), ==, PT_CMYK);
+  g_assert_cmpint (T_CHANNELS (lcms_type),   ==, 4);
+  g_assert_cmpint (T_EXTRA (lcms_type),      ==, has_alpha ? 1 : 0);
+  g_assert_cmpint (T_FLOAT (lcms_type),      ==, 0);
+  g_assert_true (babl_format_get_model (lcms_format) ==
+                 babl_model (has_alpha ? "CMYKA" : "CMYK"));
+
+  /* the pixels, as they are stored in the format */
+  babl_process (babl_fish (babl_format ("CMYKA double"), format),
+                patches, pixels, n);
+  babl_process (babl_fish (format, babl_format ("CMYKA double")),
+                pixels, quantized, n);
+
+  srgb = gimp_color_profile_new_rgb_srgb ();
+
+  transform = gimp_color_transform_new (profile, format,
+                                        srgb,    rgb_format,
+                                        GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                        GIMP_COLOR_TRANSFORM_FLAGS_NOOPTIMIZE);
+  g_assert_nonnull (transform);
+
+  gimp_color_transform_process_pixels (transform,
+                                       format, pixels,
+                                       rgb_format, rgba,
+                                       n);
+
+  for (i = 0; i < n; i++)
+    {
+      gdouble ink[4];
+      gdouble ref[3];
+
+      for (j = 0; j < 4; j++)
+        ink[j] = quantized[i][j] * 100.0;  /* lcms float CMYK is 0..100 */
+
+      cmsDoTransform (reference, ink, ref, 1);
+
+      for (j = 0; j < 3; j++)
+        {
+          if (fabs (rgba[i * rgb_n + j] - ref[j]) > 1.0 / 255.0)
+            g_error ("F11 %s: patch %d channel %d: %f, reference %f",
+                     encoding, i, j, rgba[i * rgb_n + j], ref[j]);
+        }
+
+      if (has_alpha)
+        g_assert_cmpfloat_with_epsilon (rgba[i * rgb_n + 3],
+                                        quantized[i][4],
+                                        1.0 / 255.0);
+    }
+
+  g_object_unref (transform);
+  g_object_unref (srgb);
 }
 
 static void
 f11_lcms_formats (void)
 {
-  g_test_skip ("F11 lcms format mapping: WS01b");
+  static const gchar *types[] = { "u8", "u16", "u32", "half", "float", "double" };
+  GimpColorProfile   *builtin;
+  cmsHPROFILE         srgb;
+  cmsHTRANSFORM       reference;
+  gint                i;
+
+  builtin = gimp_color_profile_new_cmyk_builtin ();
+  srgb    = cmsCreate_sRGBProfile ();
+
+  reference = cmsCreateTransform (gimp_color_profile_get_lcms_profile (builtin),
+                                  TYPE_CMYK_DBL,
+                                  srgb, TYPE_RGB_DBL,
+                                  INTENT_RELATIVE_COLORIMETRIC,
+                                  cmsFLAGS_NOOPTIMIZE);
+  g_assert_nonnull (reference);
+
+  for (i = 0; i < G_N_ELEMENTS (types); i++)
+    {
+      gchar *cmyk  = g_strdup_printf ("CMYK %s",  types[i]);
+      gchar *cmyka = g_strdup_printf ("CMYKA %s", types[i]);
+
+      f11_check_format (builtin, reference, cmyk);
+      f11_check_format (builtin, reference, cmyka);
+
+      g_free (cmyk);
+      g_free (cmyka);
+    }
+
+  f11_check_format (builtin, reference, "cmyk u8");
+  f11_check_format (builtin, reference, "cmykA u8");
+  f11_check_format (builtin, reference, "cmykA float");
+  f11_check_format (builtin, reference, "CaMaYaKaA float");
+  f11_check_format (builtin, reference, "camayakaA float");
+
+  cmsDeleteTransform (reference);
+  cmsCloseProfile (srgb);
+  g_object_unref (builtin);
 }
 
 
@@ -853,6 +1405,7 @@ main (int    argc,
   g_test_add_func ("/cmyk-foundation/F7-xcf-version",        f7_xcf_version);
   g_test_add_func ("/cmyk-foundation/F8-canonical-space",    f8_canonical_space);
   g_test_add_func ("/cmyk-foundation/F9-transform-identity", f9_transform_identity);
+  g_test_add_func ("/cmyk-foundation/F9b-convert-assign",    f9b_convert_assign);
   g_test_add_func ("/cmyk-foundation/F10-babl-contract",     f10_babl_contract);
   g_test_add_func ("/cmyk-foundation/F11-lcms-formats",      f11_lcms_formats);
   g_test_add_func ("/cmyk-foundation/F12-masks",             f12_masks);
