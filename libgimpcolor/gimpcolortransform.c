@@ -80,7 +80,9 @@ struct _GimpColorTransform
 };
 
 
-static void   gimp_color_transform_finalize (GObject *object);
+static void     gimp_color_transform_finalize       (GObject    *object);
+
+static gboolean gimp_color_transform_format_is_cmyk (const Babl *format);
 
 
 G_DEFINE_TYPE (GimpColorTransform, gimp_color_transform, G_TYPE_OBJECT)
@@ -150,6 +152,14 @@ gimp_color_transform_finalize (GObject *object)
 }
 
 
+static gboolean
+gimp_color_transform_format_is_cmyk (const Babl *format)
+{
+  return (babl_get_model_flags (babl_format_get_model (format)) &
+          BABL_MODEL_FLAG_CMYK) != 0;
+}
+
+
 /**
  * gimp_color_transform_new:
  * @src_profile:      the source #GimpColorProfile
@@ -174,6 +184,17 @@ gimp_color_transform_finalize (GObject *object)
  * returns a non-%NULL transform and the code takes care of doing only
  * exactly the requested color transform.
  *
+ * CMYK profiles (Since: 3.4): if @src_profile and @dest_profile are
+ * equal CMYK profiles (see gimp_color_profile_is_equal()), the
+ * transform is a pure re-encoding between @src_format and
+ * @dest_format in one color space, which keeps ink values exact; this
+ * is the case even if the GIMP_COLOR_TRANSFORM_DISABLE_BABL environment
+ * variable is set. Every other transform from or to a CMYK profile
+ * uses lcms and honors @rendering_intent and black point compensation.
+ * A transform to a CMYK profile which can't be used as output profile
+ * (see gimp_color_profile_is_cmyk_bidirectional()) fails and returns
+ * %NULL.
+ *
  * Returns: (nullable): the #GimpColorTransform, or %NULL if there was an error.
  *
  * Since: 2.10
@@ -191,6 +212,8 @@ gimp_color_transform_new (GimpColorProfile         *src_profile,
   cmsHPROFILE         dest_lcms;
   cmsUInt32Number     lcms_src_format;
   cmsUInt32Number     lcms_dest_format;
+  gboolean            src_cmyk;
+  gboolean            dest_cmyk;
   GError             *error = NULL;
 
   g_return_val_if_fail (GIMP_IS_COLOR_PROFILE (src_profile), NULL);
@@ -200,11 +223,57 @@ gimp_color_transform_new (GimpColorProfile         *src_profile,
 
   transform = g_object_new (GIMP_TYPE_COLOR_TRANSFORM, NULL);
 
+  src_cmyk  = gimp_color_profile_is_cmyk (src_profile);
+  dest_cmyk = gimp_color_profile_is_cmyk (dest_profile);
+
+  if (src_cmyk && dest_cmyk &&
+      gimp_color_profile_is_equal (src_profile, dest_profile) &&
+      gimp_color_transform_format_is_cmyk (src_format) &&
+      gimp_color_transform_format_is_cmyk (dest_format))
+    {
+      const Babl *space;
+
+      /* equal CMYK profiles: never re-separate, just re-encode the
+       * pixels in the (one, see gimp_color_profile_get_space())
+       * color space of the profiles
+       */
+      space = gimp_color_profile_get_space (src_profile,
+                                            GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                            &error);
+
+      if (space)
+        {
+          transform->src_format  =
+            babl_format_with_space ((const gchar *) src_format,  space);
+          transform->dest_format =
+            babl_format_with_space ((const gchar *) dest_format, space);
+
+          transform->fish = babl_fish (transform->src_format,
+                                       transform->dest_format);
+
+          g_debug ("%s: using babl re-encoding for equal CMYK profiles '%s'",
+                   G_STRFUNC,
+                   gimp_color_profile_get_label (src_profile));
+
+          return transform;
+        }
+
+      g_printerr ("%s: error making CMYK space: %s\n",
+                  G_STRFUNC, error->message);
+      g_clear_error (&error);
+    }
+
   /* only src_profile and dest_profile must determine the transform's
    * color spaces, create formats with src_format's and dest_format's
    * encoding, and the profiles' color spaces; see process_pixels()
    * and process_buffer().
+   *
+   * Transforms involving CMYK profiles always use lcms, babl's CMYK
+   * conversions ignore the rendering intent and black point
+   * compensation.
    */
+  if (src_cmyk || dest_cmyk)
+    goto use_lcms;
 
   transform->src_format = gimp_color_profile_get_format (src_profile,
                                                          src_format,
@@ -241,6 +310,8 @@ gimp_color_transform_new (GimpColorProfile         *src_profile,
 
       return transform;
     }
+
+ use_lcms:
 
   /* see above: when using lcms, don't mess with formats with color
    * spaces, gimp_color_profile_get_lcms_format() might return the
@@ -599,6 +670,11 @@ gimp_color_transform_process_buffer (GimpColorTransform  *transform,
  *
  * This function checks if a GimpColorTransform is needed at all.
  *
+ * Since 3.4, this function returns %FALSE if either profile is a CMYK
+ * profile and the profiles are not equal: such conversions must honor
+ * the rendering intent and black point compensation, which babl
+ * doesn't.
+ *
  * Returns: %TRUE if pixels can be correctly converted between
  *               @src_profile and @dest_profile by simply using
  *               gegl_buffer_copy(), babl_process() or similar.
@@ -614,6 +690,10 @@ gimp_color_transform_can_gegl_copy (GimpColorProfile *src_profile,
 
   if (gimp_color_profile_is_equal (src_profile, dest_profile))
     return TRUE;
+
+  if (gimp_color_profile_is_cmyk (src_profile) ||
+      gimp_color_profile_is_cmyk (dest_profile))
+    return FALSE;
 
   if (gimp_color_profile_get_space (src_profile,
                                     GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
