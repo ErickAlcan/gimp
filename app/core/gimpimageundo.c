@@ -338,7 +338,9 @@ gimp_image_undo_pop (GimpUndo            *undo,
         if (image_undo->base_type != gimp_image_get_base_type (image))
           {
             if ((image_undo->base_type            == GIMP_GRAY) ||
-                (gimp_image_get_base_type (image) == GIMP_GRAY))
+                (gimp_image_get_base_type (image) == GIMP_GRAY) ||
+                (image_undo->base_type            == GIMP_CMYK) ||
+                (gimp_image_get_base_type (image) == GIMP_CMYK))
               {
                 /* in case there was no profile undo, we need to emit
                  * profile-changed anyway
