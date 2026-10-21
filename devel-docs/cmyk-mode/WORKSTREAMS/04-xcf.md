@@ -84,11 +84,12 @@ switch (has CMYK cases); range check `xcf-load.c:360` rewritten for CMYK. #2/#2b
 native-format stack buffers. #3 no generated files touched.
 
 **Deviations / workarounds**
-* `gimp_layer_mode_get_non_legacy()` (WS02, INTERFACES §8.2) does not exist yet: private
-  `xcf_load_get_non_legacy_mode()` in `xcf-load.c` (FOO_LEGACY → FOO; OVERLAY_LEGACY →
-  SOFTLIGHT, matching the loader's existing OVERLAY_LEGACY → SOFTLIGHT_LEGACY fix-up).
-  Replace with the WS02 function after its merge (note: §8.2 says "same-named", which would
-  give OVERLAY for OVERLAY_LEGACY; unreachable from XCF load either way).
+* Legacy modes (after merging `cmyk-mode` at `cmyk-03-merged`): 03's `gimp_layer_set_mode()`
+  maps legacy modes silently for layers of CMYK images, so the loader detects them on the
+  raw `PROP_MODE` value (counted in `XcfInfo.n_cmyk_legacy_modes`), applies 03's
+  `gimp_layer_map_legacy_mode()`, and warns once at load end; the post-load pass stays as a
+  safety net. The private mapping table was dropped (03's table covers it; OVERLAY_LEGACY
+  still becomes SOFTLIGHT because the loader turns it into SOFTLIGHT_LEGACY first).
 * X4 crafts its invalid states directly (`layer->mode = …LEGACY`,
   `gimp_parasite_list_add()` on the private parasite list), because 02/03 entry points will
   refuse them.
