@@ -43,15 +43,24 @@
 #include "gegl/gimp-babl-compat.h"
 
 #include "core/gimp.h"
+#include "core/gimpbrushgenerated.h"
+#include "core/gimpcontainer.h"
 #include "core/gimpcontext.h"
 #include "core/gimpdrawable.h"
+#include "core/gimpdynamics.h"
 #include "core/gimperror.h"
 #include "core/gimpimage.h"
 #include "core/gimpimage-color-profile.h"
 #include "core/gimpimage-undo.h"
 #include "core/gimplayer.h"
+#include "core/gimplayer-new.h"
+#include "core/gimppaintinfo.h"
 #include "core/gimpprojectable.h"
 #include "core/gimpundostack.h"
+
+#include "paint/gimppaintcore.h"
+#include "paint/gimppaintcore-stroke.h"
+#include "paint/gimppaintoptions.h"
 
 #include "tests.h"
 
@@ -1384,6 +1393,166 @@ f12_masks (void)
 }
 
 
+/*  F12b: empty component masks (REVIEW-02 M1)  */
+
+/* one pencil stroke over the whole layer; returns whether the image got
+ * dirty or an undo step was pushed
+ */
+static gboolean
+f12b_stroke_changes_image (GimpImage *image,
+                           GimpLayer *layer)
+{
+  static const GimpCoords  default_coords = GIMP_COORDS_DEFAULT_VALUES;
+  GimpPaintInfo           *info;
+  GimpPaintOptions        *options;
+  GimpBrush               *brush;
+  GimpDynamics            *dynamics;
+  GimpPaintCore           *core;
+  GeglColor               *fg;
+  GimpCoords               coords[2];
+  GError                  *error = NULL;
+  gboolean                 changed;
+
+  info = GIMP_PAINT_INFO (gimp_container_get_child_by_name (gimp->paint_info_list,
+                                                            "gimp-pencil"));
+  g_assert_nonnull (info);
+
+  options  = gimp_paint_options_new (info);
+  brush    = GIMP_BRUSH (gimp_brush_generated_new ("f12b",
+                                                   GIMP_BRUSH_GENERATED_CIRCLE,
+                                                   4.0, 2, 1.0, 1.0, 0.0));
+  dynamics = GIMP_DYNAMICS (gimp_dynamics_new (GIMP_CONTEXT (options), "f12b"));
+  fg       = gegl_color_new ("red");
+
+  gimp_context_set_brush      (GIMP_CONTEXT (options), brush);
+  gimp_context_set_dynamics   (GIMP_CONTEXT (options), dynamics);
+  gimp_context_set_foreground (GIMP_CONTEXT (options), fg);
+  gimp_context_set_paint_mode (GIMP_CONTEXT (options), GIMP_LAYER_MODE_NORMAL);
+  g_object_set (options,
+                "dynamics-enabled", FALSE,
+                "brush-size",       8.0,
+                NULL);
+
+  coords[0]   = default_coords;
+  coords[0].x = 2.0;
+  coords[0].y = 2.0;
+  coords[1]   = default_coords;
+  coords[1].x = 13.0;
+  coords[1].y = 13.0;
+
+  gimp_image_clean_all (image);
+  g_assert_cmpint (gimp_image_is_dirty (image), ==, 0);
+  g_assert_cmpint (gimp_undo_stack_get_depth (gimp_image_get_undo_stack (image)),
+                   ==, 0);
+
+  core = g_object_new (info->paint_type, NULL);
+  gimp_paint_core_stroke (core, GIMP_DRAWABLE (layer), options,
+                          coords, G_N_ELEMENTS (coords), TRUE, &error);
+  g_assert_no_error (error);
+  g_object_unref (core);
+
+  changed = (gimp_image_is_dirty (image) != 0 ||
+             gimp_undo_stack_get_depth (gimp_image_get_undo_stack (image)) != 0);
+
+  g_object_unref (fg);
+  g_object_unref (dynamics);
+  g_object_unref (brush);
+  g_object_unref (options);
+
+  return changed;
+}
+
+static void
+f12b_check (GimpImageBaseType      base_type,
+            GimpPrecision          precision,
+            gboolean               with_alpha,
+            const GimpChannelType *channels,
+            gint                   n_channels)
+{
+  GimpImage *image;
+  GimpLayer *layer;
+  gint       i;
+
+  g_test_message ("F12b: base type %d, alpha %d", base_type, with_alpha);
+
+  /* sanity: with all components active, the stroke changes the image */
+  image = gimp_image_new (gimp, 16, 16, base_type, precision);
+  layer = gimp_layer_new (image, 16, 16,
+                          gimp_image_get_layer_format (image, with_alpha),
+                          "layer", GIMP_OPACITY_OPAQUE, GIMP_LAYER_MODE_NORMAL);
+  gimp_image_add_layer (image, layer, NULL, 0, FALSE);
+
+  g_assert_cmpint (gimp_drawable_get_active_mask (GIMP_DRAWABLE (layer)), ==,
+                   GIMP_COMPONENT_MASK_ALL);
+  g_assert_true (f12b_stroke_changes_image (image, layer));
+  g_object_unref (image);
+
+  /* all components off: empty mask, the stroke is a no-op */
+  image = gimp_image_new (gimp, 16, 16, base_type, precision);
+  layer = gimp_layer_new (image, 16, 16,
+                          gimp_image_get_layer_format (image, with_alpha),
+                          "layer", GIMP_OPACITY_OPAQUE, GIMP_LAYER_MODE_NORMAL);
+  gimp_image_add_layer (image, layer, NULL, 0, FALSE);
+
+  for (i = 0; i < n_channels; i++)
+    gimp_image_set_component_active (image, channels[i], FALSE);
+
+  g_assert_cmpint (gimp_drawable_get_active_mask (GIMP_DRAWABLE (layer)), ==, 0);
+  g_assert_false (f12b_stroke_changes_image (image, layer));
+  g_object_unref (image);
+}
+
+static void
+f12b_empty_masks (void)
+{
+  static const GimpChannelType rgb[]  = { GIMP_CHANNEL_RED,  GIMP_CHANNEL_GREEN,
+                                          GIMP_CHANNEL_BLUE, GIMP_CHANNEL_ALPHA };
+  static const GimpChannelType gray[] = { GIMP_CHANNEL_GRAY, GIMP_CHANNEL_ALPHA };
+  static const GimpChannelType cmyk[] = { GIMP_CHANNEL_CYAN,   GIMP_CHANNEL_MAGENTA,
+                                          GIMP_CHANNEL_YELLOW, GIMP_CHANNEL_BLACK,
+                                          GIMP_CHANNEL_ALPHA };
+  GimpImage *image;
+  GimpLayer *layer;
+
+  f12b_check (GIMP_RGB,  GIMP_PRECISION_U8_NON_LINEAR,  TRUE,  rgb,  4);
+  f12b_check (GIMP_RGB,  GIMP_PRECISION_U8_NON_LINEAR,  FALSE, rgb,  3);
+  f12b_check (GIMP_GRAY, GIMP_PRECISION_U16_NON_LINEAR, TRUE,  gray, 2);
+  f12b_check (GIMP_GRAY, GIMP_PRECISION_U16_NON_LINEAR, FALSE, gray, 1);
+  f12b_check (GIMP_CMYK, GIMP_PRECISION_U16_NON_LINEAR, TRUE,  cmyk, 5);
+  f12b_check (GIMP_CMYK, GIMP_PRECISION_U16_NON_LINEAR, FALSE, cmyk, 4);
+
+  /* RGB with only red active: red plus the absent-black bit */
+  image = gimp_image_new (gimp, 16, 16, GIMP_RGB, GIMP_PRECISION_U8_NON_LINEAR);
+  layer = gimp_layer_new (image, 16, 16,
+                          gimp_image_get_layer_format (image, TRUE),
+                          "layer", GIMP_OPACITY_OPAQUE, GIMP_LAYER_MODE_NORMAL);
+  gimp_image_add_layer (image, layer, NULL, 0, FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_GREEN, FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_BLUE,  FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_ALPHA, FALSE);
+  g_assert_cmpint (gimp_drawable_get_active_mask (GIMP_DRAWABLE (layer)), ==,
+                   GIMP_COMPONENT_MASK_RED | GIMP_COMPONENT_MASK_BLACK);
+  g_object_unref (image);
+
+  /* CMYK with only K active: only the black bit */
+  image = gimp_image_new (gimp, 16, 16, GIMP_CMYK, GIMP_PRECISION_U16_NON_LINEAR);
+  layer = gimp_layer_new (image, 16, 16,
+                          gimp_image_get_layer_format (image, TRUE),
+                          "layer", GIMP_OPACITY_OPAQUE, GIMP_LAYER_MODE_NORMAL);
+  gimp_image_add_layer (image, layer, NULL, 0, FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_CYAN,    FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_MAGENTA, FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_YELLOW,  FALSE);
+  gimp_image_set_component_active (image, GIMP_CHANNEL_ALPHA,   FALSE);
+  g_assert_cmpint (gimp_image_get_active_mask (image), ==,
+                   GIMP_COMPONENT_MASK_BLACK);
+  g_assert_cmpint (gimp_drawable_get_active_mask (GIMP_DRAWABLE (layer)), ==,
+                   GIMP_COMPONENT_MASK_BLACK);
+  g_assert_true (f12b_stroke_changes_image (image, layer));
+  g_object_unref (image);
+}
+
+
 /*  F13: CMYK GeglColor alpha changes and the FG color keep the inks  */
 
 static void
@@ -1541,6 +1710,7 @@ main (int    argc,
   g_test_add_func ("/cmyk-foundation/F10-babl-contract",     f10_babl_contract);
   g_test_add_func ("/cmyk-foundation/F11-lcms-formats",      f11_lcms_formats);
   g_test_add_func ("/cmyk-foundation/F12-masks",             f12_masks);
+  g_test_add_func ("/cmyk-foundation/F12b-empty-masks",      f12b_empty_masks);
   g_test_add_func ("/cmyk-foundation/F13-foreground-inks",   f13_foreground_inks);
 
   result = g_test_run ();

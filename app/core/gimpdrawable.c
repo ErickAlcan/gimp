@@ -1747,6 +1747,19 @@ gimp_drawable_get_active_mask (GimpDrawable *drawable)
 
   mask = GIMP_DRAWABLE_GET_CLASS (drawable)->get_active_mask (drawable);
 
+  /* the black bit of a non-CMYK drawable is the bit of an absent
+   * component (I7): like the alpha bit below, set or clear it depending
+   * on the other bits, so that an otherwise empty mask stays 0 (nothing
+   * to do) and an otherwise full mask stays GIMP_COMPONENT_MASK_ALL
+   */
+  if (! gimp_drawable_is_cmyk (drawable))
+    {
+      if (mask & ~(GIMP_COMPONENT_MASK_ALPHA | GIMP_COMPONENT_MASK_BLACK))
+        mask |= GIMP_COMPONENT_MASK_BLACK;
+      else
+        mask &= ~GIMP_COMPONENT_MASK_BLACK;
+    }
+
   /* if the drawable doesn't have an alpha channel, the value of the mask's
    * alpha-bit doesn't matter, however, we'd like to have a fully-clear or
    * fully-set mask whenever possible, since it allows us to skip component
