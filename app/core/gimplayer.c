@@ -752,8 +752,8 @@ gimp_layer_update_mode_node (GimpLayer *layer)
       visible_composite_space = layer->effective_composite_space;
       visible_composite_mode  = layer->effective_composite_mode;
 
-      /* B3: in CMYK images, composite in CMYK unless the layer's *stored*
-       * composite space is explicitly an RGB space (INTERFACES §8.3).
+      /* in CMYK images, composite in CMYK unless the layer's *stored*
+       * composite space is explicitly an RGB space
        */
       cmyk_native = (gimp_layer_get_composite_space (layer) ==
                      GIMP_LAYER_COLOR_SPACE_AUTO);

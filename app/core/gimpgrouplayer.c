@@ -1161,7 +1161,7 @@ get_projection_format (GimpProjectable   *projectable,
                                     gimp_image_get_layer_space (image));
 
     case GIMP_CMYK:
-      /* "CMYKA <precision>" in the image's CMYK space (INTERFACES §8.6) */
+      /* "CMYKA <precision>" in the image's CMYK space */
       return gimp_image_get_format (image, GIMP_CMYK, precision, TRUE,
                                     gimp_image_get_layer_space (image));
     }

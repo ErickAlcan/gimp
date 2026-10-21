@@ -163,3 +163,27 @@ Requests for other owners
   `babl_conversion_new()` for the space-less formats drops the first to 0.04 s, but babl does not
   use it for formats tagged with a CMYK space. Fix belongs in babl (or a gimp-babl registration
   hook per CMYK space if babl allows one).
+
+**Thread-scaling investigation** (merged cmyk-09-merged, da9e756)
+* Cause: babl never builds fast paths when either format has a CMYK space (`babl-fish.c`, the
+  `babl_space_is_cmyk()` check before `babl_fish_path()`), so every CMYK conversion is a
+  reference fish, and `babl_fish_reference_process_double()` holds the global
+  `babl_reference_mutex` while it converts. With 2 threads the renders serialized on it (gdb
+  samples: threads waiting in `babl_mutex_lock` under `gegl_buffer_iterator_next` of the
+  layer-mode op). Not the converter (Normal never touches it) and not GimpColorTransform.
+* Hot sites, all fixed in 02 files: (1) the layer-mode op's aux pad (layer u8/u16 -> CMYKA float):
+  the op now reads CMYK(A) u8/u16 layers in their own format and converts them itself;
+  (2) the "pass aux through" shortcut of the bottom op handed the native layer buffer to the next
+  op's input pad: disabled when the native read is active; (3) empty input buffers are created
+  in the pad format; (4) the CMYK converter re-encodes CMYKA float <-> u16 itself;
+  (5) `gimptilehandlervalidate.c` renders CMYK(A) u8/u16 projection tiles through CMYKA float and
+  quantizes itself. Every local conversion is checked once against babl (all u8/u16 values,
+  rounding neighbourhoods, out-of-range floats) and falls back to babl if it ever differs, so
+  results stay bit-identical (golden, compositing, image, xcf, e2e, histogram green).
+* Reviewer M3: the CMYK source-format lookups are now resolved once in `prepare()` (and in
+  `set_fixed_format()` for paint instances), not on every `real_process()` call.
+* P2 after the fix (box shared with other agents' builds, so +-20 %): 1 thread CMYK 0.11-0.14 s
+  vs RGB 0.13-0.16 s (0.76-0.87x); 2 threads CMYK 0.11-0.17 s vs RGB 0.13-0.21 s (0.81-0.86x).
+  Before: 0.25 s (1 thread) / 0.60 s (2 threads). P1: 1.06-1.2 s (1.5-1.7 s under heavy load);
+  P1 does not scale with threads here, neither does RGB on this loaded box.
+* Comments in owned files no longer reference workstreams or INTERFACES sections.

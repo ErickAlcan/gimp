@@ -124,6 +124,7 @@ static gboolean        process_last_node                             (GeglOperat
                                                                       const GeglRectangle *roi,
                                                                       gint                 level);
 
+static const Babl    * gimp_operation_layer_mode_lookup_cmyk_format  (GimpOperationLayerMode  *op);
 static const Babl    * gimp_operation_layer_mode_get_cmyk_format     (GimpOperationLayerMode  *op);
 static void            gimp_operation_layer_mode_cache_fishes        (GimpOperationLayerMode  *op,
                                                                       const Babl              *preferred_format,
@@ -407,7 +408,7 @@ gimp_operation_layer_mode_class_init (GimpOperationLayerModeClass *klass)
                                                       G_PARAM_CONSTRUCT));
 
   /* whether the op composites natively in CMYK when it meets CMYK data
-   * (devel-docs/cmyk-mode/INTERFACES.md §8.3).  FALSE when the layer's or
+   *.  FALSE when the layer's or
    * filter's stored composite space is an explicit RGB space.
    */
   g_object_class_install_property (object_class, PROP_CMYK_NATIVE,
@@ -451,7 +452,8 @@ gimp_operation_layer_mode_set_property (GObject      *object,
   switch (property_id)
     {
     case PROP_LAYER_MODE:
-      self->layer_mode = g_value_get_enum (value);
+      self->layer_mode        = g_value_get_enum (value);
+      self->cmyk_format_valid = FALSE;
       break;
 
     case PROP_OPACITY:
@@ -471,7 +473,8 @@ gimp_operation_layer_mode_set_property (GObject      *object,
       break;
 
     case PROP_CMYK_NATIVE:
-      self->prop_cmyk_native = g_value_get_boolean (value);
+      self->prop_cmyk_native  = g_value_get_boolean (value);
+      self->cmyk_format_valid = FALSE;
       break;
 
     default:
@@ -580,7 +583,7 @@ gimp_operation_layer_mode_prepare (GeglOperation *operation)
 
   self->has_mask = mask_extent && ! gegl_rectangle_is_empty (mask_extent);
 
-  /* legacy safety net: legacy modes are not available in CMYK images (I9),
+  /* legacy safety net: legacy modes are not available in CMYK images,
    * if one still meets CMYK data it composites in its RGB space (lossy).
    */
   if (gimp_layer_mode_is_legacy (self->layer_mode) &&
@@ -600,6 +603,9 @@ gimp_operation_layer_mode_prepare (GeglOperation *operation)
                      "compositing in RGB", G_STRFUNC, self->layer_mode);
         }
     }
+
+  self->cmyk_format       = gimp_operation_layer_mode_lookup_cmyk_format (self);
+  self->cmyk_format_valid = TRUE;
 
   gimp_operation_layer_mode_cache_fishes (self, preferred_format, &format, NULL, NULL);
 
@@ -960,7 +966,7 @@ gimp_operation_layer_mode_real_process (GeglOperation       *operation,
                                           &blend_to_composite_fish);
 
   /* CMYK: the composite side has n_components (5) per sample, the blend
-   * side always 4 (INTERFACES §8.4).  convert the blended samples to the
+   * side always 4.  convert the blended samples to the
    * blend format with the CMYK converter, blend, and convert the result
    * back into 'blend_out' (stride n_components).
    */
@@ -1257,14 +1263,14 @@ process_last_node (GeglOperation       *operation,
 }
 
 static const Babl *
-gimp_operation_layer_mode_get_cmyk_format (GimpOperationLayerMode *op)
+gimp_operation_layer_mode_lookup_cmyk_format (GimpOperationLayerMode *op)
 {
   GeglOperation *operation = GEGL_OPERATION (op);
   const Babl    *format;
 
-  /* see INTERFACES §8.3: the op composites in CMYK iff its cmyk-native
-   * property is set, its mode is not legacy, and one of its sources (or its
-   * fixed format, for the paint core's instances) is CMYK.
+  /* the op composites in CMYK iff its cmyk-native property is set, its
+   * mode is not legacy, and one of its sources (or its fixed format, for
+   * the paint core's instances) is CMYK.
    */
   if (! op->prop_cmyk_native ||
       ! gimp_layer_mode_is_cmyk_native (op->layer_mode))
@@ -1287,6 +1293,16 @@ gimp_operation_layer_mode_get_cmyk_format (GimpOperationLayerMode *op)
   return NULL;
 }
 
+/* resolved once in prepare() (or set_fixed_format()), not per process call */
+static const Babl *
+gimp_operation_layer_mode_get_cmyk_format (GimpOperationLayerMode *op)
+{
+  if (op->cmyk_format_valid)
+    return op->cmyk_format;
+
+  return gimp_operation_layer_mode_lookup_cmyk_format (op);
+}
+
 static const Babl *
 get_cmyk_blend_format (GimpOperationLayerMode *op)
 {
@@ -1295,7 +1311,7 @@ get_cmyk_blend_format (GimpOperationLayerMode *op)
   if (blend_space == GIMP_LAYER_COLOR_SPACE_AUTO)
     blend_space = gimp_layer_mode_get_blend_space (op->layer_mode);
 
-  /* blend formats are sRGB based (NULL space, I5) */
+  /* blend formats are sRGB based (NULL space) */
   switch (blend_space)
     {
     case GIMP_LAYER_COLOR_SPACE_RGB_LINEAR:
@@ -1341,7 +1357,7 @@ gimp_operation_layer_mode_cache_fishes (GimpOperationLayerMode  *op,
 
   if (cmyk_format)
     {
-      /* composite in "CMYKA float" in the CMYK space (INTERFACES §8.3) */
+      /* composite in "CMYKA float" in the CMYK space */
       format = gimp_layer_mode_get_format (op->layer_mode,
                                            op->blend_space,
                                            GIMP_LAYER_COLOR_SPACE_AUTO,
@@ -1583,8 +1599,10 @@ gimp_operation_layer_mode_set_fixed_format (GimpOperationLayerMode *layer_mode,
   g_return_if_fail (GIMP_IS_OPERATION_LAYER_MODE (layer_mode));
   g_return_if_fail (format != NULL);
 
-  layer_mode->fixed_format     = format;
-  layer_mode->prop_cmyk_native = TRUE;
+  layer_mode->fixed_format      = format;
+  layer_mode->prop_cmyk_native  = TRUE;
+  layer_mode->cmyk_format       = gimp_operation_layer_mode_lookup_cmyk_format (layer_mode);
+  layer_mode->cmyk_format_valid = TRUE;
 
   gegl_operation_set_format (operation, "input",  format);
   gegl_operation_set_format (operation, "aux",    format);

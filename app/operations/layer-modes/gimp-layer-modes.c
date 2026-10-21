@@ -1231,7 +1231,7 @@ gimp_layer_mode_is_legacy (GimpLayerMode mode)
  * @mode: a #GimpLayerMode
  *
  * Returns: %TRUE if @mode composites natively in CMYK images, i.e. if it
- *          is not a legacy mode (INTERFACES §8.1, I9).
+ *          is not a legacy mode.
  **/
 gboolean
 gimp_layer_mode_is_cmyk_native (GimpLayerMode mode)
@@ -1465,7 +1465,7 @@ gimp_layer_mode_get_operation (GimpLayerMode mode)
  * non-CMYK formats this is gimp_layer_mode_get_operation() (same
  * instance, pads untouched).  For CMYK formats it is a process-wide
  * instance per (non-legacy @mode, @format), whose pad formats are set
- * explicitly, so that it composites with 5 components (INTERFACES §8.2).
+ * explicitly, so that it composites with 5 components.
  *
  * Returns: a #GeglOperation which may be reused and must not be freed.
  **/
@@ -1681,7 +1681,7 @@ gimp_layer_mode_get_format (GimpLayerMode           mode,
 
   /* CMYK images composite in CMYKA float in the image's CMYK space,
    * unless the caller's (unresolved) composite space is explicitly an
-   * RGB space (INTERFACES §8.2, B3).  Legacy modes mean their non-legacy
+   * RGB space.  Legacy modes mean their non-legacy
    * equivalent here.
    */
   if (composite_space == GIMP_LAYER_COLOR_SPACE_AUTO &&

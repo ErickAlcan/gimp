@@ -273,8 +273,7 @@ struct ProcessGeneric
 };
 
 /* CMYKA: component c in 0..4 (C, M, Y, K, alpha) is selected by bit
- * cmyka_bits[c] of the mask (devel-docs/cmyk-mode/INTERFACES.md §1:
- * bit0 C, bit1 M, bit2 Y, bit3 alpha, bit4 K).
+ * cmyka_bits[c] of the mask (bit0 C, bit1 M, bit2 Y, bit3 alpha, bit4 K).
  */
 static const guint cmyka_bits[5] =
 {

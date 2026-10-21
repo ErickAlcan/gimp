@@ -19,15 +19,15 @@
  */
 
 /* The CMYK <-> blend space converter used by GimpOperationLayerMode when
- * it composites in CMYK (devel-docs/cmyk-mode/INTERFACES.md §8.5).
+ * it composites in CMYK.
  *
  * Blend modes blend in an RGB/Lab space: the backdrop and the layer are
  * converted from "CMYKA float" (image space) to the op's blend format
- * (sRGB based, NULL babl space, I5), blended with 4 components, and the
+ * (sRGB based, NULL babl space), blended with 4 components, and the
  * result is converted back.  The color conversion runs through two
  * GimpColorTransforms per CMYK space, "CMYKA u16" <-> "R'G'B'A u16" sRGB,
  * relative colorimetric with black point compensation.  With lcms (the
- * GimpColorTransform CMYK path of WS01b) these are precomputed 16 bit
+ * lcms GimpColorTransform CMYK path) these are precomputed 16 bit
  * device links, an order of magnitude faster than babl's reference fish.
  * If the transforms cannot be created, babl fishes are used directly.
  */

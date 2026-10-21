@@ -64,7 +64,7 @@ gimp_drawable_real_apply_buffer (GimpDrawable           *drawable,
   if (GIMP_DRAWABLE (mask) == drawable || gimp_channel_is_empty (mask))
     mask = NULL;
 
-  /*  legacy modes are not available in CMYK images (I9)  */
+  /*  legacy modes are not available in CMYK images  */
   if (gimp_drawable_is_cmyk (drawable))
     mode = gimp_layer_mode_get_non_legacy (mode);
 
