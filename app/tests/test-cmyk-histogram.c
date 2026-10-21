@@ -739,10 +739,20 @@ h5_cmyk_selector (void)
   g_assert_cmpint (pixels[4], ==, 65535);
   g_free (pixels);
 
-  /* ... and as FG through the context.  gimp_context_set_foreground()
-   * calls gimp_color_set_alpha(), which round-trips through RGBA
-   * (libgimpcolor/gimpcolor.c, not owned by WS08): pending that fix.
+  /* ... and as FG through the context: gimp_context_set_foreground()
+   * goes through gimp_color_set_alpha(), which keeps CMYK inks (01b).
+   * Reset the layer to paper first, so the FG fill is what is measured.
    */
+  gimp_drawable_fill_buffer (GIMP_DRAWABLE (layer),
+                             gimp_drawable_get_buffer (GIMP_DRAWABLE (layer)),
+                             white, NULL, 0, 0);
+  pixels = gimp_test_utils_read_patch (gimp_drawable_get_buffer (GIMP_DRAWABLE (layer)),
+                                       GEGL_RECTANGLE (0, 0, 1, 1),
+                                       babl_format_with_space ("CMYKA u16",
+                                                               gimp_image_get_layer_space (image)));
+  g_assert_cmpint (pixels[3], <, 65535);
+  g_free (pixels);
+
   gimp_context_set_foreground (gimp_get_user_context (gimp), color);
   gimp_drawable_fill (GIMP_DRAWABLE (layer), gimp_get_user_context (gimp),
                       GIMP_FILL_FOREGROUND);
@@ -751,9 +761,11 @@ h5_cmyk_selector (void)
                                        GEGL_RECTANGLE (0, 0, 1, 1),
                                        babl_format_with_space ("CMYKA u16",
                                                                gimp_image_get_layer_space (image)));
-  if (pixels[0] != 0 || pixels[1] != 0 || pixels[2] != 0 || pixels[3] != 65535)
-    g_test_incomplete ("H5: FG fill not exact: gimp_color_set_alpha() converts "
-                       "CMYK colors through RGBA (pending libgimpcolor fix)");
+  g_assert_cmpint (pixels[0], ==, 0);
+  g_assert_cmpint (pixels[1], ==, 0);
+  g_assert_cmpint (pixels[2], ==, 0);
+  g_assert_cmpint (pixels[3], ==, 65535);
+  g_assert_cmpint (pixels[4], ==, 65535);
   g_free (pixels);
 
   g_list_free (scales);

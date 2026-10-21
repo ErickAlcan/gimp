@@ -293,8 +293,9 @@ cmyk_color (GimpImage *image,
 }
 
 /* GimpContext stores FG/BG through gimp_color_set_alpha(), which must not
- * re-separate CMYK colors (libgimpcolor/gimpcolor.c; pending a fix by its
- * owner).  Tests that need an exact CMYK FG/BG skip without it.
+ * re-separate CMYK colors (libgimpcolor/gimpcolor.c, fixed by 01b).  Tests
+ * that need an exact CMYK FG/BG assert it first, so a regression there is
+ * reported as such instead of as a pixel mismatch.
  */
 static gboolean
 context_colors_are_exact (GimpImage *image)
@@ -314,16 +315,8 @@ context_colors_are_exact (GimpImage *image)
   return exact;
 }
 
-#define SKIP_WITHOUT_EXACT_CONTEXT_COLORS(image)                          \
-  G_STMT_START {                                                          \
-    if (! context_colors_are_exact (image))                               \
-      {                                                                   \
-        g_test_skip ("pending integration: gimp_color_set_alpha() "       \
-                     "re-separates CMYK colors (GimpContext FG/BG)");     \
-        g_object_unref (image);                                           \
-        return;                                                           \
-      }                                                                   \
-  } G_STMT_END
+#define ASSERT_EXACT_CONTEXT_COLORS(image) \
+  g_assert_true (context_colors_are_exact (image))
 
 static void
 add_precision_tests (const gchar   *path,
@@ -790,7 +783,7 @@ c4_native_fill (void)
   image = new_image (W, H, GIMP_PRECISION_U16_NON_LINEAR);
   layer = gimp_test_utils_add_cmyk_layer (image, "layer", TRUE, NULL);
 
-  SKIP_WITHOUT_EXACT_CONTEXT_COLORS (image);
+  ASSERT_EXACT_CONTEXT_COLORS (image);
 
   fg = gegl_color_new (NULL);
   gegl_color_set_pixel (fg, cmyk_format (image, "CMYK float"), cmyk);
@@ -833,7 +826,7 @@ c5_component_active (void)
   image = new_image (W, H, GIMP_PRECISION_U16_NON_LINEAR);
   layer = gimp_test_utils_add_cmyk_layer (image, "layer", TRUE, ink);
 
-  SKIP_WITHOUT_EXACT_CONTEXT_COLORS (image);
+  ASSERT_EXACT_CONTEXT_COLORS (image);
 
   gimp_test_utils_read_cmyk_pixel (drawable_buffer (layer), 3, 3, before);
 
@@ -992,7 +985,7 @@ c8_flatten (void)
 
   image  = new_image (W, H, GIMP_PRECISION_U16_NON_LINEAR);
 
-  SKIP_WITHOUT_EXACT_CONTEXT_COLORS (image);
+  ASSERT_EXACT_CONTEXT_COLORS (image);
   bottom = gimp_test_utils_add_cmyk_layer (image, "bottom", TRUE, NULL);
   top    = gimp_test_utils_add_cmyk_layer (image, "top",    TRUE, NULL);
 
