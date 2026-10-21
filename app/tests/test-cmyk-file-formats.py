@@ -138,7 +138,7 @@ def load(path):
 ################################################################################
 # Minimal TIFF writer / reader (baseline, little endian, one strip)
 
-def write_cmyk_tiff(path, w, h, pixels, icc=None):
+def write_cmyk_tiff(path, w, h, pixels, icc=None, spp=4):
   SHORT, LONG, UNDEFINED = 3, 4, 7
   entries = []        # (tag, type, count, value bytes)
 
@@ -149,11 +149,11 @@ def write_cmyk_tiff(path, w, h, pixels, icc=None):
 
   short(256, w)
   short(257, h)
-  short(258, 8, 8, 8, 8)
+  short(258, *([8] * spp))
   short(259, 1)                 # no compression
   short(262, 5)                 # separated
   long_(273, 0)                 # strip offset, patched below
-  short(277, 4)
+  short(277, spp)
   short(278, h)
   long_(279, len(pixels))
   short(284, 1)                 # contiguous
@@ -427,4 +427,19 @@ def run_tests():
   loaded.delete()
 
 
+################################################################################
+# Hostile inputs (REVIEW-02 M2): must fail or degrade cleanly, never crash.
+# The test runner turns any plug-in or core crash into a test failure.
+
+def hostile_tiff_spp():
+  # SEPARATED + InkSet CMYK with fewer samples than inks
+  for spp in (2, 3):
+    path = os.path.join(tmpdir, f'cmyk-hostile-spp{spp}.tif')
+    write_cmyk_tiff(path, 4, 4, bytes((i * 37) & 0xff for i in range(16 * spp)),
+                    spp=spp)
+    loaded = load(path)
+    gimp_assert(f"hostile TIFF spp={spp}: refused (no image)", loaded is None)
+
+
 run_tests()
+hostile_tiff_spp()
