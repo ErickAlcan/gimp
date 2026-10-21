@@ -214,8 +214,6 @@ static void            xcf_load_fix_cmyk_profile (XcfInfo    *info,
 static void            xcf_load_fix_cmyk_layer_modes
                                                  (XcfInfo    *info,
                                                   GimpImage  *image);
-static GimpLayerMode   xcf_load_get_non_legacy_mode
-                                                 (GimpLayerMode mode);
 
 static GeglColor     * xcf_load_color         (XcfInfo       *info,
                                                goffset        next_prop,
@@ -2474,7 +2472,22 @@ xcf_load_layer_props (XcfInfo    *info,
             if (mode == GIMP_LAYER_MODE_OVERLAY_LEGACY)
               mode = GIMP_LAYER_MODE_SOFTLIGHT_LEGACY;
 
-            gimp_layer_set_mode (*layer, mode, FALSE);
+            /* I9: legacy modes are not available in CMYK images.
+             * Detect them on the stored value, gimp_layer_set_mode()
+             * maps them silently for layers of CMYK images.
+             */
+            if (gimp_image_get_base_type (image) == GIMP_CMYK &&
+                gimp_layer_mode_is_legacy (mode))
+              {
+                info->n_cmyk_legacy_modes++;
+
+                gimp_layer_set_mode (*layer, mode, FALSE);
+                gimp_layer_map_legacy_mode (*layer, FALSE);
+              }
+            else
+              {
+                gimp_layer_set_mode (*layer, mode, FALSE);
+              }
           }
           break;
 
@@ -4553,42 +4566,6 @@ xcf_load_fix_cmyk_profile (XcfInfo   *info,
                 profile ? gimp_color_profile_get_label (profile) : "?");
 }
 
-/* Private stand-in for gimp_layer_mode_get_non_legacy() (owner WS02,
- * INTERFACES §8.2).  GIMP_LAYER_MODE_OVERLAY_LEGACY never reaches this
- * function: the loader already maps it to SOFTLIGHT_LEGACY, which is
- * what it really is.
- */
-static GimpLayerMode
-xcf_load_get_non_legacy_mode (GimpLayerMode mode)
-{
-  switch (mode)
-    {
-    case GIMP_LAYER_MODE_NORMAL_LEGACY:         return GIMP_LAYER_MODE_NORMAL;
-    case GIMP_LAYER_MODE_BEHIND_LEGACY:         return GIMP_LAYER_MODE_BEHIND;
-    case GIMP_LAYER_MODE_MULTIPLY_LEGACY:       return GIMP_LAYER_MODE_MULTIPLY;
-    case GIMP_LAYER_MODE_SCREEN_LEGACY:         return GIMP_LAYER_MODE_SCREEN;
-    case GIMP_LAYER_MODE_OVERLAY_LEGACY:        return GIMP_LAYER_MODE_SOFTLIGHT;
-    case GIMP_LAYER_MODE_DIFFERENCE_LEGACY:     return GIMP_LAYER_MODE_DIFFERENCE;
-    case GIMP_LAYER_MODE_ADDITION_LEGACY:       return GIMP_LAYER_MODE_ADDITION;
-    case GIMP_LAYER_MODE_SUBTRACT_LEGACY:       return GIMP_LAYER_MODE_SUBTRACT;
-    case GIMP_LAYER_MODE_DARKEN_ONLY_LEGACY:    return GIMP_LAYER_MODE_DARKEN_ONLY;
-    case GIMP_LAYER_MODE_LIGHTEN_ONLY_LEGACY:   return GIMP_LAYER_MODE_LIGHTEN_ONLY;
-    case GIMP_LAYER_MODE_HSV_HUE_LEGACY:        return GIMP_LAYER_MODE_HSV_HUE;
-    case GIMP_LAYER_MODE_HSV_SATURATION_LEGACY: return GIMP_LAYER_MODE_HSV_SATURATION;
-    case GIMP_LAYER_MODE_HSL_COLOR_LEGACY:      return GIMP_LAYER_MODE_HSL_COLOR;
-    case GIMP_LAYER_MODE_HSV_VALUE_LEGACY:      return GIMP_LAYER_MODE_HSV_VALUE;
-    case GIMP_LAYER_MODE_DIVIDE_LEGACY:         return GIMP_LAYER_MODE_DIVIDE;
-    case GIMP_LAYER_MODE_DODGE_LEGACY:          return GIMP_LAYER_MODE_DODGE;
-    case GIMP_LAYER_MODE_BURN_LEGACY:           return GIMP_LAYER_MODE_BURN;
-    case GIMP_LAYER_MODE_HARDLIGHT_LEGACY:      return GIMP_LAYER_MODE_HARDLIGHT;
-    case GIMP_LAYER_MODE_SOFTLIGHT_LEGACY:      return GIMP_LAYER_MODE_SOFTLIGHT;
-    case GIMP_LAYER_MODE_GRAIN_EXTRACT_LEGACY:  return GIMP_LAYER_MODE_GRAIN_EXTRACT;
-    case GIMP_LAYER_MODE_GRAIN_MERGE_LEGACY:    return GIMP_LAYER_MODE_GRAIN_MERGE;
-    case GIMP_LAYER_MODE_COLOR_ERASE_LEGACY:    return GIMP_LAYER_MODE_COLOR_ERASE;
-    default:                                    return mode;
-    }
-}
-
 /* I9 (INTERFACES §13): no layer of a CMYK image has a legacy mode */
 static void
 xcf_load_fix_cmyk_layer_modes (XcfInfo   *info,
@@ -4596,26 +4573,21 @@ xcf_load_fix_cmyk_layer_modes (XcfInfo   *info,
 {
   GList *layers;
   GList *iter;
-  gint   n_mapped = 0;
 
+  /* safety net: the stored modes were already mapped while loading
+   * the layer properties (and counted there)
+   */
   layers = gimp_image_get_layer_list (image);
 
   for (iter = layers; iter; iter = g_list_next (iter))
     {
-      GimpLayer     *layer = iter->data;
-      GimpLayerMode  mode  = gimp_layer_get_mode (layer);
-
-      if (gimp_layer_mode_is_legacy (mode))
-        {
-          gimp_layer_set_mode (layer, xcf_load_get_non_legacy_mode (mode),
-                               FALSE);
-          n_mapped++;
-        }
+      if (gimp_layer_map_legacy_mode (iter->data, FALSE))
+        info->n_cmyk_legacy_modes++;
     }
 
   g_list_free (layers);
 
-  if (n_mapped > 0)
+  if (info->n_cmyk_legacy_modes > 0)
     gimp_message (info->gimp, G_OBJECT (info->progress),
                   GIMP_MESSAGE_WARNING,
                   ngettext ("%d layer of this CMYK image used a legacy "
@@ -4626,8 +4598,11 @@ xcf_load_fix_cmyk_layer_modes (XcfInfo   *info,
                             "layer modes, which are not available for CMYK "
                             "images. They were replaced by the corresponding "
                             "non-legacy modes.",
-                            n_mapped),
-                  n_mapped);
+                            info->n_cmyk_legacy_modes),
+                  info->n_cmyk_legacy_modes);
+
+  /* warn only once, also if called again on the partial-load path */
+  info->n_cmyk_legacy_modes = 0;
 }
 
 static GeglColor *
