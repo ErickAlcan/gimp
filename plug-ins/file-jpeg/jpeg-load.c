@@ -379,7 +379,15 @@ load_image (GFile        *file,
                        (gint) (len - sizeof (JPEG_APP_HEADER_EXIF)));
 #endif
             }
-          else if (marker->marker == JPEG_APP0 + 13)
+          else if (marker->marker == JPEG_APP0 + 13 &&
+                   /* Only well-formed "Photoshop 3.0" markers: a shorter
+                    * one would underflow the length below.  Large
+                    * resource blocks are split over several markers
+                    * (see jpeg-export.c), joined here.
+                    */
+                   len > sizeof (JPEG_APP_HEADER_PS) &&
+                   ! memcmp (data, JPEG_APP_HEADER_PS,
+                             sizeof (JPEG_APP_HEADER_PS)))
             {
               photoshop_data = g_realloc (photoshop_data,
                                           (gsize) photoshop_len + len - sizeof (JPEG_APP_HEADER_PS));

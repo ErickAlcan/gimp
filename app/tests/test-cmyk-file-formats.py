@@ -488,6 +488,70 @@ def hostile_psd_layer_channels():
   loaded.delete()
 
 
+def psd_resource(rid, payload):
+  r = b'8BIM' + struct.pack('>H', rid) + b'\0\0' + struct.pack('>I', len(payload)) + payload
+  return r + (b'\0' if len(payload) % 2 else b'')
+
+def jpeg_insert_markers(src, dst, markers):
+  '''Copies JPEG src to dst with raw markers inserted right after SOI.'''
+  with open(src, 'rb') as f:
+    data = f.read()
+  gimp_assert("JPEG starts with SOI", data[:2] == b'\xff\xd8')
+  with open(dst, 'wb') as f:
+    f.write(data[:2] + b''.join(markers) + data[2:])
+
+def app13_markers(block, max_payload=65533 - 14):
+  '''Splits a resource block over APP13 markers like jpeg-export does.'''
+  header  = b'Photoshop 3.0\0'
+  markers = []
+  for off in range(0, len(block), max_payload):
+    payload = header + block[off:off + max_payload]
+    markers.append(b'\xff\xed' + struct.pack('>H', 2 + len(payload)) + payload)
+  return markers
+
+def hostile_jpeg_app13():
+  image, layer = new_cmyk_image(16, 16, 1, False)
+  base = os.path.join(tmpdir, 'cmyk-app13-base.jpg')
+  gimp_assert("APP13 base JPEG export", export('file-jpeg-export', image, base,
+                                                quality=1.0))
+  image.delete()
+
+  # A marker shorter than the "Photoshop 3.0" header
+  path = os.path.join(tmpdir, 'cmyk-hostile-app13-short.jpg')
+  jpeg_insert_markers(base, path, [b'\xff\xed\x00\x06Ph\x00\x00'])
+  loaded = load(path)
+  gimp_assert("hostile JPEG with a 4-byte APP13: loads as CMYK",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  loaded.delete()
+
+  # A resource block larger than one marker, split like jpeg-export does:
+  # a 70000-byte filler resource (obsolete id 1000, ignored by the
+  # loader), then grid & guides (1032) with 2 guides, which straddle
+  # the marker boundary only if the joining code is right.
+  guides = struct.pack('>IIII', 1, 576, 576, 2) + \
+           struct.pack('>IB', 3 * 32, 0) + struct.pack('>IB', 5 * 32, 1)
+  block  = psd_resource(1000, bytes(70000)) + psd_resource(1032, guides)
+  for label, max_payload in (('split', 65533 - 14), ('split-tiny', 7)):
+    markers = app13_markers(block, max_payload)
+    gimp_assert(f"APP13 {label}: several markers", len(markers) > 1)
+    path = os.path.join(tmpdir, f'cmyk-app13-{label}.jpg')
+    jpeg_insert_markers(base, path, markers)
+    loaded = load(path)
+    gimp_assert(f"APP13 {label}: loads as CMYK",
+                loaded is not None and
+                loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+    vguide = loaded.find_next_guide(0)
+    hguide = loaded.find_next_guide(vguide) if vguide else 0
+    found  = sorted([(loaded.get_guide_orientation(g).value_nick,
+                      loaded.get_guide_position(g)) for g in (vguide, hguide) if g])
+    print(f"APP13 {label}: guides {found}")
+    gimp_assert(f"APP13 {label}: both guides restored from the joined block",
+                found == [('horizontal', 5), ('vertical', 3)])
+    loaded.delete()
+
+
 run_tests()
 hostile_tiff_spp()
 hostile_psd_layer_channels()
+hostile_jpeg_app13()
