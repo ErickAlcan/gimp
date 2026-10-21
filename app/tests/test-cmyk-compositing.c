@@ -26,6 +26,7 @@
 
 #include "config.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
@@ -1840,7 +1841,10 @@ perf (void)
   assert_targets = ! strcmp (env, "1");
 
   g_object_get (gegl_config (), "threads", &threads, NULL);
-  g_object_set (gegl_config (), "threads", 2, NULL);
+  g_object_set (gegl_config (), "threads",
+                g_getenv ("GIMP_TESTING_PERF_THREADS") ?
+                atoi (g_getenv ("GIMP_TESTING_PERF_THREADS")) : 2,
+                NULL);
 
   image = perf_image (GIMP_CMYK, GIMP_LAYER_MODE_MULTIPLY);
   p1 = render_time (image);
@@ -1848,6 +1852,19 @@ perf (void)
 
   image = perf_image (GIMP_CMYK, GIMP_LAYER_MODE_NORMAL);
   p2_cmyk = render_time (image);
+  if (g_getenv ("GIMP_TESTING_PERF_REPEAT"))
+    {
+      /* for profiling: re-render the same projection N times */
+      gint n = atoi (g_getenv ("GIMP_TESTING_PERF_REPEAT"));
+
+      while (n--)
+        {
+          GList *layers = gimp_image_get_layer_iter (image);
+
+          gimp_drawable_update (GIMP_DRAWABLE (layers->data), 0, 0, -1, -1);
+          g_printerr ("P2 repeat: %.3f s\n", render_time (image));
+        }
+    }
   g_object_unref (image);
 
   image = perf_image (GIMP_RGB, GIMP_LAYER_MODE_NORMAL);

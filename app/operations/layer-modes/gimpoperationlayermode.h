@@ -64,6 +64,7 @@ struct _GimpOperationLayerMode
   const GimpLayerModeCmykConverter *cmyk_converter;
   gboolean                     cached_cmyk;
   gboolean                     legacy_cmyk_warned;
+  const Babl                  *aux_native_format;
 };
 
 struct _GimpOperationLayerModeClass

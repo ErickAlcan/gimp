@@ -21,6 +21,8 @@
 
 #include "config.h"
 
+#include <string.h>
+
 #include <gegl-plugin.h>
 #include <cairo.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -134,6 +136,200 @@ G_DEFINE_TYPE (GimpOperationLayerMode, gimp_operation_layer_mode,
                GEGL_TYPE_OPERATION_POINT_COMPOSER3)
 
 #define parent_class gimp_operation_layer_mode_parent_class
+
+
+/*  native CMYK layer reads.
+ *
+ *  babl never builds fast paths for formats with a CMYK space
+ *  (babl-fish.c): every CMYK conversion is a reference fish, which runs
+ *  under babl's global reference mutex, so the conversions of all threads
+ *  serialize (P2 got slower with 2 threads than with 1).  The op therefore
+ *  reads CMYK(A) u8/u16 layers in their own format and converts them to
+ *  "CMYKA float" itself; the result is verified once against babl for all
+ *  values, so it is bit-identical to what GEGL would have delivered.
+ */
+static gboolean aux_native_checked[2]  = { FALSE, FALSE };
+static gboolean aux_native_ok[2]       = { FALSE, FALSE };
+static GMutex   aux_native_mutex;
+
+static inline gfloat
+u8_to_float (guint8 v)
+{
+  return (gfloat) ((gdouble) v / 255.0);
+}
+
+static inline gfloat
+u16_to_float (guint16 v)
+{
+  return (gfloat) ((gdouble) v / 65535.0);
+}
+
+static void
+aux_to_float (const Babl *format,
+              gconstpointer src,
+              gfloat       *dest,
+              glong         n)
+{
+  const gint     n_components = babl_format_get_n_components (format);
+  const gboolean u16          = babl_format_get_bytes_per_pixel (format) ==
+                                2 * n_components;
+
+  if (u16)
+    {
+      const guint16 *s = src;
+
+      if (n_components == 5)
+        {
+          while (n--)
+            {
+              dest[0] = u16_to_float (s[0]);
+              dest[1] = u16_to_float (s[1]);
+              dest[2] = u16_to_float (s[2]);
+              dest[3] = u16_to_float (s[3]);
+              dest[4] = u16_to_float (s[4]);
+              s += 5; dest += 5;
+            }
+        }
+      else
+        {
+          while (n--)
+            {
+              dest[0] = u16_to_float (s[0]);
+              dest[1] = u16_to_float (s[1]);
+              dest[2] = u16_to_float (s[2]);
+              dest[3] = u16_to_float (s[3]);
+              dest[4] = 1.0f;
+              s += 4; dest += 5;
+            }
+        }
+    }
+  else
+    {
+      const guint8 *s = src;
+
+      if (n_components == 5)
+        {
+          while (n--)
+            {
+              dest[0] = u8_to_float (s[0]);
+              dest[1] = u8_to_float (s[1]);
+              dest[2] = u8_to_float (s[2]);
+              dest[3] = u8_to_float (s[3]);
+              dest[4] = u8_to_float (s[4]);
+              s += 5; dest += 5;
+            }
+        }
+      else
+        {
+          while (n--)
+            {
+              dest[0] = u8_to_float (s[0]);
+              dest[1] = u8_to_float (s[1]);
+              dest[2] = u8_to_float (s[2]);
+              dest[3] = u8_to_float (s[3]);
+              dest[4] = 1.0f;
+              s += 4; dest += 5;
+            }
+        }
+    }
+}
+
+/* compare aux_to_float() with babl once per component type, on every value */
+static gboolean
+aux_native_verify (const Babl *format,
+                   const Babl *float_format)
+{
+  const gint  n_values = babl_format_get_bytes_per_pixel (format) == 10 ? 65536 : 256;
+  const gint  n        = n_values;
+  guint8     *src      = g_malloc (n * 10);
+  gfloat     *mine     = g_new (gfloat, n * 5);
+  gfloat     *ref      = g_new (gfloat, n * 5);
+  gint        i, c;
+  gboolean    ok;
+
+  for (i = 0; i < n; i++)
+    for (c = 0; c < 5; c++)
+      {
+        if (n_values == 65536)
+          ((guint16 *) src)[i * 5 + c] = (i * (c + 1) * 7919) & 0xffff;
+        else
+          src[i * 5 + c] = (i * (c + 1) * 31) & 0xff;
+      }
+
+  /* all values in every channel */
+  for (i = 0; i < n; i++)
+    {
+      if (n_values == 65536)
+        ((guint16 *) src)[i * 5] = i;
+      else
+        src[i * 5] = i;
+    }
+
+  aux_to_float (format, src, mine, n);
+  babl_process (babl_fish (format, float_format), src, ref, n);
+
+  ok = ! memcmp (mine, ref, n * 5 * sizeof (gfloat));
+
+  g_free (src);
+  g_free (mine);
+  g_free (ref);
+
+  return ok;
+}
+
+static gboolean
+aux_native_supported (const Babl *aux_format,
+                      const Babl *float_format)
+{
+  const Babl *model;
+  gint        bpp;
+  gint        index;
+  gboolean    ok;
+
+  if (! aux_format                                  ||
+      ! gimp_babl_format_is_cmyk (aux_format)        ||
+      babl_format_get_space (aux_format) != babl_format_get_space (float_format))
+    return FALSE;
+
+  model = babl_format_get_model (aux_format);
+
+  if (model != babl_model_with_space ("CMYK",  aux_format) &&
+      model != babl_model_with_space ("CMYKA", aux_format))
+    return FALSE;
+
+  bpp = babl_format_get_bytes_per_pixel (aux_format) /
+        babl_format_get_n_components (aux_format);
+
+  if (bpp == 1)
+    index = 0;
+  else if (bpp == 2)
+    index = 1;
+  else
+    return FALSE;
+
+  g_mutex_lock (&aux_native_mutex);
+
+  if (! aux_native_checked[index])
+    {
+      /* verify with the alpha variant, it covers all five channels */
+      const Babl *check = babl_format_with_space (index == 0 ? "CMYKA u8" :
+                                                               "CMYKA u16",
+                                                  aux_format);
+
+      aux_native_ok[index]      = aux_native_verify (check, float_format);
+      aux_native_checked[index] = TRUE;
+
+      if (! aux_native_ok[index])
+        g_printerr ("%s: native CMYK %s reads differ from babl, disabled\n",
+                    G_STRFUNC, index == 0 ? "u8" : "u16");
+    }
+
+  ok = aux_native_ok[index];
+
+  g_mutex_unlock (&aux_native_mutex);
+
+  return ok;
+}
 
 static CompositeFunc composite_union                = gimp_operation_layer_mode_composite_union;
 static CompositeFunc composite_clip_to_backdrop     = gimp_operation_layer_mode_composite_clip_to_backdrop;
@@ -409,7 +605,23 @@ gimp_operation_layer_mode_prepare (GeglOperation *operation)
 
   gegl_operation_set_format (operation, "input",  format);
   gegl_operation_set_format (operation, "output", format);
-  gegl_operation_set_format (operation, "aux",    format);
+
+  /* CMYK: read the layer in its own format and convert it here, see
+   * aux_to_float()
+   */
+  self->aux_native_format = NULL;
+
+  if (self->cmyk)
+    {
+      const Babl *aux_format = gegl_operation_get_source_format (operation, "aux");
+
+      if (aux_native_supported (aux_format, format))
+        self->aux_native_format = aux_format;
+    }
+
+  gegl_operation_set_format (operation, "aux",
+                             self->aux_native_format ?
+                             self->aux_native_format : format);
   gegl_operation_set_format (operation, "aux2",   babl_format_with_space ("Y float", format));
 }
 
@@ -512,8 +724,24 @@ gimp_operation_layer_mode_process (GeglOperation       *operation,
                                    const GeglRectangle *roi,
                                    gint                 level)
 {
-  return ((GimpOperationLayerMode *) operation)->function (
-    operation, in, layer, mask, out, samples, roi, level);
+  GimpOperationLayerMode *self = (GimpOperationLayerMode *) operation;
+
+  if (self->aux_native_format && layer)
+    {
+      gfloat   *layer_float = gegl_scratch_new (gfloat, 5 * samples);
+      gboolean  result;
+
+      aux_to_float (self->aux_native_format, layer, layer_float, samples);
+
+      result = self->function (operation, in, layer_float, mask, out,
+                               samples, roi, level);
+
+      gegl_scratch_free (layer_float);
+
+      return result;
+    }
+
+  return self->function (operation, in, layer, mask, out, samples, roi, level);
 }
 
 static gboolean
@@ -579,7 +807,12 @@ gimp_operation_layer_mode_real_parent_process (GeglOperation        *operation,
            */
           if (! (affected_region & GIMP_LAYER_COMPOSITE_REGION_SOURCE) &&
               point->opacity == 1.0                                    &&
-              ! gegl_operation_context_get_object (context, "aux2"))
+              ! gegl_operation_context_get_object (context, "aux2")     &&
+              /* CMYK: don't hand the native layer buffer on, the next op
+               * would convert it with babl's serialized reference fish;
+               * process it (aux_to_float()) instead
+               */
+              ! point->aux_native_format)
             {
               /* pass 'aux' directly as output; */
               gegl_operation_context_set_object (context, "output", aux);
@@ -635,7 +868,14 @@ gimp_operation_layer_mode_real_parent_process (GeglOperation        *operation,
    */
   if (! input || ! aux)
     {
-      GObject *empty = G_OBJECT (gegl_buffer_new (NULL, NULL));
+      /* CMYK: give the empty buffer the pad format, an RGBA float empty
+       * buffer would be converted to CMYK through babl's (serialized)
+       * reference fish
+       */
+      GObject *empty = G_OBJECT (gegl_buffer_new (NULL,
+                                                  point->cmyk ?
+                                                  gegl_operation_get_format (operation, "input") :
+                                                  NULL));
 
       if (! input) gegl_operation_context_set_object (context, "input", empty);
       if (! aux)   gegl_operation_context_set_object (context, "aux",   empty);
