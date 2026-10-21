@@ -127,6 +127,12 @@ gimp_get_images (void)
  * [method@Gimp.Image.set_palette]. An indexed image without a palette
  * will output unexpected colors.
  *
+ * If your image's type is CMYK, the default CMYK color profile is
+ * attached to the new image. To use another CMYK profile, call
+ * [method@Gimp.Image.set_color_profile] right after creating the
+ * image, before adding layers. Creating a CMYK image fails if GIMP was
+ * built without CMYK support.
+ *
  * Returns: (transfer none): The newly created image.
  **/
 GimpImage *
@@ -169,8 +175,10 @@ gimp_image_new (gint              width,
  *
  * Creates a new image, undisplayed with the specified extents, type
  * and precision. Indexed images can only be created at
- * [enum@Gimp.Precision.U8_NON_LINEAR] precision. See
- * [ctor@Gimp.Image.new] for further details.
+ * [enum@Gimp.Precision.U8_NON_LINEAR] precision. CMYK images can only
+ * be created at non-linear precisions (e.g.
+ * [enum@Gimp.Precision.U16_NON_LINEAR]). See [ctor@Gimp.Image.new] for
+ * further details.
  *
  * Returns: (transfer none): The newly created image.
  *
@@ -2175,6 +2183,8 @@ gimp_image_is_dirty (GimpImage *image)
  * are returned in RGB[A] or GRAY[A] format. The bpp return value gives
  * the number of bits per pixel in the image.
  *
+ * Thumbnails of CMYK images are sRGB: RGB[A] pixels, bpp 3 or 4.
+ *
  * Returns: TRUE on success.
  **/
 gboolean
@@ -2545,8 +2555,9 @@ gimp_image_get_selection (GimpImage *image)
  * Returns if the specified image's image component is active.
  *
  * This procedure returns if the specified image's image component
- * (i.e. Red, Green, Blue intensity channels in an RGB image) is active
- * or inactive -- whether or not it can be modified. If the specified
+ * (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan,
+ * Magenta, Yellow, Black channels in a CMYK image) is active or
+ * inactive -- whether or not it can be modified. If the specified
  * component is not valid for the image type, an error is returned.
  *
  * Returns: Component is active.
@@ -2586,7 +2597,8 @@ gimp_image_get_component_active (GimpImage       *image,
  * Sets if the specified image's image component is active.
  *
  * This procedure sets if the specified image's image component (i.e.
- * Red, Green, Blue intensity channels in an RGB image) is active or
+ * Red, Green, Blue intensity channels in an RGB image, or Cyan,
+ * Magenta, Yellow, Black channels in a CMYK image) is active or
  * inactive -- whether or not it can be modified. If the specified
  * component is not valid for the image type, an error is returned.
  *
@@ -2627,10 +2639,10 @@ gimp_image_set_component_active (GimpImage       *image,
  * Returns if the specified image's image component is visible.
  *
  * This procedure returns if the specified image's image component
- * (i.e. Red, Green, Blue intensity channels in an RGB image) is
- * visible or invisible -- whether or not it can be seen. If the
- * specified component is not valid for the image type, an error is
- * returned.
+ * (i.e. Red, Green, Blue intensity channels in an RGB image, or Cyan,
+ * Magenta, Yellow, Black channels in a CMYK image) is visible or
+ * invisible -- whether or not it can be seen. If the specified
+ * component is not valid for the image type, an error is returned.
  *
  * Returns: Component is visible.
  **/
@@ -2669,7 +2681,8 @@ gimp_image_get_component_visible (GimpImage       *image,
  * Sets if the specified image's image component is visible.
  *
  * This procedure sets if the specified image's image component (i.e.
- * Red, Green, Blue intensity channels in an RGB image) is visible or
+ * Red, Green, Blue intensity channels in an RGB image, or Cyan,
+ * Magenta, Yellow, Black channels in a CMYK image) is visible or
  * invisible -- whether or not it can be seen. If the specified
  * component is not valid for the image type, an error is returned.
  *
@@ -3473,6 +3486,10 @@ gimp_image_attach_parasite (GimpImage          *image,
  * It will return %FALSE if @name is invalid (%NULL or empty string)
  * and %TRUE otherwise (even if there was no parasite removed, because
  * no parasite was named like this).
+ *
+ * The \"icc-profile\" parasite of a CMYK image cannot be detached: a
+ * CMYK image always has a color profile. Use
+ * [method@Gimp.Image.set_color_profile] to change it instead.
  *
  * Returns: TRUE on success.
  *

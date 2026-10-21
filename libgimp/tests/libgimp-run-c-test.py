@@ -16,4 +16,6 @@ cmd = (
   f"result = proc.run(None); "
   f"print('SUCCESS') if result.index(0) == Gimp.PDBStatusType.SUCCESS else gimp_c_assert('{TEST_FILE}', result.index(1), False);"
 )
-subprocess.run([sys.executable, GIMP_EXE, "-nis", "--batch-interpreter", "python-fu-eval", "-b", cmd, "--quit"], check=True)
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from pygimp.run import run_gimp_batch
+run_gimp_batch(GIMP_EXE, cmd)

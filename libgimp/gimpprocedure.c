@@ -784,8 +784,16 @@ gimp_procedure_get_proc_type (GimpProcedure *procedure)
  * here, so you could say "RGB\*" instead of "RGB, RGBA" or "\*" for all
  * image types.
  *
- * Supported types are "RGB", "GRAY", "INDEXED" and their variants
- * with alpha.
+ * Supported types are "RGB", "GRAY", "INDEXED", "CMYK" and their
+ * variants with alpha ("RGBA", "GRAYA", "INDEXEDA", "CMYKA") or with a
+ * wildcard ("RGB\*", "GRAY\*", "INDEXED\*", "CMYK\*").
+ *
+ * Note that "\*" means the RGB, grayscale and indexed types only: since
+ * GIMP 3.4, a procedure which can deal with CMYK drawables has to opt
+ * in explicitly, e.g. with "\*, CMYK\*". Image types only control the
+ * sensitivity of the procedure's menu entry; a script calling the
+ * procedure through the PDB may still pass it a CMYK image, so a
+ * procedure not handling CMYK should check the image's base type.
  *
  * Since: 3.0
  **/

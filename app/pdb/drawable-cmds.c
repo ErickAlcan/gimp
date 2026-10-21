@@ -398,6 +398,35 @@ drawable_is_indexed_invoker (GimpProcedure         *procedure,
 }
 
 static GimpValueArray *
+drawable_is_cmyk_invoker (GimpProcedure         *procedure,
+                          Gimp                  *gimp,
+                          GimpContext           *context,
+                          GimpProgress          *progress,
+                          const GimpValueArray  *args,
+                          GError               **error)
+{
+  gboolean success = TRUE;
+  GimpValueArray *return_vals;
+  GimpDrawable *drawable;
+  gboolean is_cmyk = FALSE;
+
+  drawable = g_value_get_object (gimp_value_array_index (args, 0));
+
+  if (success)
+    {
+      is_cmyk = gimp_drawable_is_cmyk (drawable);
+    }
+
+  return_vals = gimp_procedure_get_return_values (procedure, success,
+                                                  error ? *error : NULL);
+
+  if (success)
+    g_value_set_boolean (gimp_value_array_index (return_vals, 1), is_cmyk);
+
+  return return_vals;
+}
+
+static GimpValueArray *
 drawable_get_bpp_invoker (GimpProcedure         *procedure,
                           Gimp                  *gimp,
                           GimpContext           *context,
@@ -1253,7 +1282,7 @@ register_drawable_procs (GimpPDB *pdb)
   gimp_procedure_set_static_help (procedure,
                                   "Returns the drawable's thumbnail Babl format",
                                   "This procedure returns the drawable's thumbnail Babl format.\n"
-                                  "Thumbnails are always 8-bit images, see 'gimp-drawable-thumbnail' and 'gimp-drawable-sub-thmbnail'.",
+                                  "Thumbnails are always 8-bit images, see 'gimp-drawable-thumbnail' and 'gimp-drawable-sub-thmbnail'. Thumbnails of CMYK drawables are sRGB (R'G'B' u8 or R'G'B'A u8).",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",
@@ -1422,6 +1451,8 @@ register_drawable_procs (GimpPDB *pdb)
                                       GIMP_GRAY_IMAGE);
   gimp_param_spec_enum_exclude_value (GIMP_PARAM_SPEC_ENUM (procedure->values[0]),
                                       GIMP_INDEXED_IMAGE);
+  gimp_param_spec_enum_exclude_value (GIMP_PARAM_SPEC_ENUM (procedure->values[0]),
+                                      GIMP_CMYK_IMAGE);
   gimp_pdb_register_procedure (pdb, procedure);
   g_object_unref (procedure);
 
@@ -1536,6 +1567,35 @@ register_drawable_procs (GimpPDB *pdb)
                                    g_param_spec_boolean ("is-indexed",
                                                          "is indexed",
                                                          "TRUE if the drawable is an indexed type",
+                                                         FALSE,
+                                                         GIMP_PARAM_READWRITE));
+  gimp_pdb_register_procedure (pdb, procedure);
+  g_object_unref (procedure);
+
+  /*
+   * gimp-drawable-is-cmyk
+   */
+  procedure = gimp_procedure_new (drawable_is_cmyk_invoker, FALSE);
+  gimp_object_set_static_name (GIMP_OBJECT (procedure),
+                               "gimp-drawable-is-cmyk");
+  gimp_procedure_set_static_help (procedure,
+                                  "Returns whether the drawable is a CMYK type.",
+                                  "This procedure returns TRUE if the specified drawable is of type { CMYK, CMYKA }.",
+                                  NULL);
+  gimp_procedure_set_static_attribution (procedure,
+                                         "The GIMP Team",
+                                         "The GIMP Team",
+                                         "2026");
+  gimp_procedure_add_argument (procedure,
+                               gimp_param_spec_drawable ("drawable",
+                                                         "drawable",
+                                                         "The drawable",
+                                                         FALSE,
+                                                         GIMP_PARAM_READWRITE));
+  gimp_procedure_add_return_value (procedure,
+                                   g_param_spec_boolean ("is-cmyk",
+                                                         "is cmyk",
+                                                         "TRUE if the drawable is a CMYK type",
                                                          FALSE,
                                                          GIMP_PARAM_READWRITE));
   gimp_pdb_register_procedure (pdb, procedure);
@@ -2080,7 +2140,7 @@ register_drawable_procs (GimpPDB *pdb)
                                "gimp-drawable-thumbnail");
   gimp_procedure_set_static_help (procedure,
                                   "Get a thumbnail of a drawable.",
-                                  "This function gets data from which a thumbnail of a drawable preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bytes in the image.",
+                                  "This function gets data from which a thumbnail of a drawable preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bytes in the image. Thumbnails of CMYK drawables are sRGB: RGB[A] pixels, bpp 3 or 4.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Andy Thomas",
@@ -2139,7 +2199,7 @@ register_drawable_procs (GimpPDB *pdb)
                                "gimp-drawable-sub-thumbnail");
   gimp_procedure_set_static_help (procedure,
                                   "Get a thumbnail of a sub-area of a drawable drawable.",
-                                  "This function gets data from which a thumbnail of a drawable preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bytes in the image.",
+                                  "This function gets data from which a thumbnail of a drawable preview can be created. Maximum x or y dimension is 1024 pixels. The pixels are returned in RGB[A] or GRAY[A] format. The bpp return value gives the number of bytes in the image. Thumbnails of CMYK drawables are sRGB: RGB[A] pixels, bpp 3 or 4.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",

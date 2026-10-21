@@ -26,6 +26,8 @@
 
 #include "pdb-types.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "core/gimp.h"
 #include "core/gimp-utils.h"
 #include "core/gimpbrush.h"
@@ -641,6 +643,216 @@ gimp_pdb_image_is_not_base_type (GimpImage          *image,
                gimp_get_enum_value_nick (GIMP_TYPE_IMAGE_BASE_TYPE, type));
 
   return FALSE;
+}
+
+/**
+ * gimp_pdb_base_type_is_valid:
+ * @type:      an image base type
+ * @precision: a precision
+ * @error:     return location for an error
+ *
+ * Checks that an image of base type @type can be created at (or
+ * converted to) @precision. CMYK images additionally require CMYK
+ * support in babl (see gimp_babl_has_cmyk_support()) and a non-linear
+ * precision.
+ *
+ * Returns: %TRUE if the combination is valid, otherwise %FALSE with
+ *          @error set.
+ **/
+gboolean
+gimp_pdb_base_type_is_valid (GimpImageBaseType   type,
+                             GimpPrecision       precision,
+                             GError            **error)
+{
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  if (type == GIMP_CMYK && ! gimp_babl_has_cmyk_support ())
+    {
+      g_set_error_literal (error, GIMP_PDB_ERROR,
+                           GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                           _("CMYK images are not supported: babl was "
+                             "built without color management (lcms)"));
+      return FALSE;
+    }
+
+  if (gimp_babl_is_valid (type, precision))
+    return TRUE;
+
+  if (type == GIMP_CMYK)
+    g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                 _("Precision '%s' is not valid for CMYK images: "
+                   "CMYK images require a non-linear precision"),
+                 gimp_get_enum_value_nick (GIMP_TYPE_PRECISION, precision));
+  else
+    g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                 _("Precision '%s' is not valid for images of type '%s'"),
+                 gimp_get_enum_value_nick (GIMP_TYPE_PRECISION, precision),
+                 gimp_get_enum_value_nick (GIMP_TYPE_IMAGE_BASE_TYPE, type));
+
+  return FALSE;
+}
+
+/**
+ * gimp_pdb_image_type_is_valid:
+ * @image: an image
+ * @type:  the type of a drawable to be created for @image
+ * @error: return location for an error
+ *
+ * CMYK drawable types are only valid for CMYK images, and a CMYK
+ * image accepts only CMYK types and grayscale types (the latter for
+ * floating selections of channels and masks). The other combinations
+ * are not checked, as they were not before CMYK support.
+ *
+ * Returns: %TRUE if @type can be used for a drawable of @image.
+ **/
+gboolean
+gimp_pdb_image_type_is_valid (GimpImage      *image,
+                              GimpImageType   type,
+                              GError        **error)
+{
+  GimpImageBaseType base_type;
+  gboolean          type_is_cmyk;
+
+  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  base_type    = gimp_image_get_base_type (image);
+  type_is_cmyk = (type == GIMP_CMYK_IMAGE || type == GIMP_CMYKA_IMAGE);
+
+  if (type_is_cmyk && base_type != GIMP_CMYK)
+    {
+      g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                   _("Image '%s' (%d) is of type '%s', "
+                     "but a drawable of type '%s' requires a CMYK image"),
+                   gimp_image_get_display_name (image),
+                   gimp_image_get_id (image),
+                   gimp_get_enum_value_nick (GIMP_TYPE_IMAGE_BASE_TYPE,
+                                             base_type),
+                   gimp_get_enum_value_nick (GIMP_TYPE_IMAGE_TYPE, type));
+      return FALSE;
+    }
+
+  if (base_type == GIMP_CMYK && ! type_is_cmyk &&
+      type != GIMP_GRAY_IMAGE && type != GIMP_GRAYA_IMAGE)
+    {
+      g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                   _("Image '%s' (%d) is a CMYK image, "
+                     "drawables of type '%s' cannot be created for it"),
+                   gimp_image_get_display_name (image),
+                   gimp_image_get_id (image),
+                   gimp_get_enum_value_nick (GIMP_TYPE_IMAGE_TYPE, type));
+      return FALSE;
+    }
+
+  return TRUE;
+}
+
+/**
+ * gimp_pdb_image_has_component:
+ * @image:     an image
+ * @component: a component (channel type)
+ * @error:     return location for an error
+ *
+ * Checks that @component exists in the color model of @image: GRAY in
+ * grayscale images, INDEXED in indexed images, CYAN, MAGENTA, YELLOW
+ * and BLACK in CMYK images, RED, GREEN, BLUE in RGB images, ALPHA in
+ * RGB and CMYK images.
+ *
+ * Returns: %TRUE if @component is valid for @image.
+ **/
+gboolean
+gimp_pdb_image_has_component (GimpImage        *image,
+                              GimpChannelType   component,
+                              GError          **error)
+{
+  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  switch (component)
+    {
+    case GIMP_CHANNEL_GRAY:
+      return gimp_pdb_image_is_base_type (image, GIMP_GRAY, error);
+
+    case GIMP_CHANNEL_INDEXED:
+      return gimp_pdb_image_is_base_type (image, GIMP_INDEXED, error);
+
+    case GIMP_CHANNEL_CYAN:
+    case GIMP_CHANNEL_MAGENTA:
+    case GIMP_CHANNEL_YELLOW:
+    case GIMP_CHANNEL_BLACK:
+      return gimp_pdb_image_is_base_type (image, GIMP_CMYK, error);
+
+    case GIMP_CHANNEL_ALPHA:
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        return TRUE;
+      return gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+
+    case GIMP_CHANNEL_RED:
+    case GIMP_CHANNEL_GREEN:
+    case GIMP_CHANNEL_BLUE:
+      break;
+    }
+
+  return gimp_pdb_image_is_base_type (image, GIMP_RGB, error);
+}
+
+/**
+ * gimp_pdb_drawable_has_histogram_channel:
+ * @drawable: a drawable
+ * @channel:  a histogram channel
+ * @error:    return location for an error
+ *
+ * Checks only the color model: the CYAN, MAGENTA, YELLOW and BLACK
+ * channels exist only for CMYK drawables, and the RED, GREEN, BLUE and
+ * LUMINANCE channels do not exist for CMYK drawables. VALUE and ALPHA
+ * pass (callers check alpha and grayscale rules themselves).
+ *
+ * Returns: %TRUE if @channel can be used with @drawable.
+ **/
+gboolean
+gimp_pdb_drawable_has_histogram_channel (GimpDrawable          *drawable,
+                                         GimpHistogramChannel   channel,
+                                         GError               **error)
+{
+  gboolean is_cmyk;
+  gboolean valid = TRUE;
+
+  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), FALSE);
+  g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  is_cmyk = gimp_drawable_is_cmyk (drawable);
+
+  switch (channel)
+    {
+    case GIMP_HISTOGRAM_VALUE:
+    case GIMP_HISTOGRAM_ALPHA:
+      break;
+
+    case GIMP_HISTOGRAM_RED:
+    case GIMP_HISTOGRAM_GREEN:
+    case GIMP_HISTOGRAM_BLUE:
+    case GIMP_HISTOGRAM_LUMINANCE:
+    case GIMP_HISTOGRAM_RGB:
+      valid = ! is_cmyk;
+      break;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      valid = is_cmyk;
+      break;
+    }
+
+  if (! valid)
+    g_set_error (error, GIMP_PDB_ERROR, GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                 _("Channel '%s' is not valid for drawable '%s' (%d)"),
+                 gimp_get_enum_value_nick (GIMP_TYPE_HISTOGRAM_CHANNEL,
+                                           channel),
+                 gimp_object_get_name (drawable),
+                 gimp_item_get_id (GIMP_ITEM (drawable)));
+
+  return valid;
 }
 
 gboolean

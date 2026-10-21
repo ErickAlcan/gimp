@@ -103,7 +103,10 @@ gimp_channel_new (GimpImage   *image,
  *
  * Create a new channel from a color component
  *
- * This procedure creates a new channel from a color component.
+ * This procedure creates a new channel from a color component. The
+ * component must exist in the image's color model (for instance
+ * [enum@Gimp.ChannelType.CYAN] to [enum@Gimp.ChannelType.BLACK] for a
+ * CMYK image).
  *
  * The new channel still needs to be added to the image, as this is not
  * automatic. Add the new channel with

@@ -21,8 +21,11 @@ sub image_convert_rgb {
 
     $help = <<'HELP';
 This procedure converts the specified image to RGB color. This process
-requires an image in Grayscale or Indexed color mode. No image content is
-lost in this process aside from the colormap for an indexed image.
+requires an image in Grayscale, Indexed or CMYK color mode. No image
+content is lost in this process aside from the colormap for an indexed
+image. A CMYK image is converted with its color profile to the built-in
+sRGB profile, using the perceptual rendering intent with black point
+compensation.
 HELP
 
     &std_pdb_misc;
@@ -54,7 +57,7 @@ sub image_convert_grayscale {
 
     $help = <<'HELP';
 This procedure converts the specified image to grayscale. This process
-requires an image in RGB or Indexed color mode.
+requires an image in RGB, Indexed or CMYK color mode.
 HELP
 
     &std_pdb_misc;
@@ -86,7 +89,8 @@ sub image_convert_indexed {
 
     $help = <<'HELP';
 This procedure converts the specified image to 'indexed' color. This
-process requires an image in RGB or Grayscale mode. The 'palette_type'
+process requires an image in RGB or Grayscale mode; CMYK images must be
+converted to RGB first. The 'palette_type'
 specifies what kind of palette to use, A type of '0' means to use an
 optimal palette of 'num_cols' generated from the colors in the
 image. A type of '1' means to re-use the previous palette (not
@@ -128,7 +132,15 @@ HELP
 {
   GimpPalette *pal = NULL;
 
-  if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error)             &&
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      g_set_error_literal (error, GIMP_PDB_ERROR,
+                           GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                           _("CMYK images cannot be converted to indexed "
+                             "directly. Convert the image to RGB first."));
+      success = FALSE;
+    }
+  else if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error)        &&
       gimp_pdb_image_is_precision (image, GIMP_PRECISION_U8_NON_LINEAR, error) &&
       gimp_babl_is_valid (GIMP_INDEXED, gimp_image_get_precision (image))      &&
       gimp_item_stack_is_flat (GIMP_ITEM_STACK (gimp_image_get_layers (image))))
@@ -173,6 +185,100 @@ HELP
                                           dither_type, alpha_dither, FALSE,
                                           pal,
                                           NULL, error);
+}
+CODE
+    );
+}
+
+sub image_convert_cmyk {
+    $blurb = 'Convert specified image to CMYK color';
+
+    $help = <<'HELP';
+This procedure converts the specified image to CMYK color, using
+@color_profile as the CMYK profile of the result, or the default CMYK
+profile (the color management preferences' CMYK profile, else the
+built-in one) if @color_profile is %NULL. The profile must be a CMYK
+profile which can be used in both directions (it must contain output
+tables). This process requires an image in RGB, Grayscale or Indexed
+color mode, and GIMP built with CMYK support.
+
+
+@intent and @bpc are used for the color conversion of the image's
+pixels. The image's precision is changed to the corresponding
+non-linear precision if needed, as CMYK images are always non-linear.
+
+
+Legacy layer modes are replaced by their non-legacy equivalent, since
+CMYK images do not support legacy layer modes.
+HELP
+
+    $author = $copyright = 'The GIMP Team';
+    $date  = '2026';
+    $since = '3.4';
+
+    $lib_private = 1;
+
+    @inargs = (
+	{ name => 'image', type => 'image',
+	  desc => 'The image' },
+	{ name => 'color_profile', type => 'bytes', none_ok => 1,
+	  desc => 'The serialized CMYK color profile, or %NULL for the
+		   default CMYK profile' },
+	{ name => 'intent', type => 'enum GimpColorRenderingIntent',
+	  desc => 'Rendering intent' },
+	{ name => 'bpc', type => 'boolean',
+	  desc => 'Black point compensation' }
+    );
+
+    %invoke = (
+	code => <<'CODE'
+{
+  GimpColorProfile *profile = NULL;
+
+  if (gimp_pdb_image_is_not_base_type (image, GIMP_CMYK, error) &&
+      /* only checks CMYK support: the conversion makes the precision
+       * non-linear itself
+       */
+      gimp_pdb_base_type_is_valid (GIMP_CMYK, GIMP_PRECISION_U8_NON_LINEAR,
+                                   error))
+    {
+      if (color_profile && g_bytes_get_size (color_profile) > 0)
+        {
+          profile = gimp_color_profile_new_from_icc_profile (g_bytes_get_data (color_profile, NULL),
+                                                             g_bytes_get_size (color_profile),
+                                                             error);
+          if (! profile)
+            {
+              success = FALSE;
+            }
+          else if (! gimp_color_profile_is_cmyk (profile))
+            {
+              g_set_error_literal (error, GIMP_PDB_ERROR,
+                                   GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                                   _("Color profile is not for CMYK color space"));
+              success = FALSE;
+            }
+          else if (! gimp_color_profile_is_cmyk_bidirectional (profile))
+            {
+              g_set_error_literal (error, GIMP_PDB_ERROR,
+                                   GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                                   _("CMYK color profile cannot be used for "
+                                     "conversion to CMYK (missing output tables)"));
+              success = FALSE;
+            }
+        }
+    }
+  else
+    {
+      success = FALSE;
+    }
+
+  if (success)
+    success = gimp_image_convert_type_full (image, GIMP_CMYK, profile,
+                                            intent, bpc,
+                                            progress, error);
+
+  g_clear_object (&profile);
 }
 CODE
     );
@@ -223,7 +329,8 @@ sub image_convert_precision {
     $help = <<'HELP';
 This procedure converts the image to the specified precision. Note
 that indexed images cannot be converted and are always in
-GIMP_PRECISION_U8.
+GIMP_PRECISION_U8, and that CMYK images only accept non-linear
+precisions.
 HELP
 
     &mitch_pdb_misc('2012', '2.10');
@@ -240,7 +347,8 @@ HELP
 {
   if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error) &&
       gimp_pdb_image_is_not_precision (image, precision, error)    &&
-      gimp_babl_is_valid (gimp_image_get_base_type (image), precision))
+      gimp_pdb_base_type_is_valid (gimp_image_get_base_type (image),
+                                   precision, error))
     {
       gimp_image_convert_precision (image, precision,
                                     GEGL_DITHER_NONE,
@@ -257,7 +365,9 @@ CODE
     );
 }
 
-@headers = qw("gegl/gimp-babl.h"
+@headers = qw(<cairo.h>
+              "libgimpcolor/gimpcolor.h"
+              "gegl/gimp-babl.h"
               "core/gimp.h"
               "core/gimpimage.h"
               "core/gimpimage-convert-indexed.h"
@@ -272,6 +382,7 @@ CODE
 @procs = qw(image_convert_rgb
             image_convert_grayscale
             image_convert_indexed
+            image_convert_cmyk
             image_convert_set_dither_matrix
             image_convert_precision);
 
@@ -279,7 +390,7 @@ CODE
 
 $desc = 'Image Convert';
 $doc_title = 'gimpimageconvert';
-$doc_short_desc = 'Conversions between RGB, indexed, and grayscale modes.';
-$doc_long_desc = 'Conversions between RGB, indexed, and grayscale modes.';
+$doc_short_desc = 'Conversions between RGB, indexed, grayscale and CMYK modes.';
+$doc_long_desc = 'Conversions between RGB, indexed, grayscale and CMYK modes.';
 
 1;

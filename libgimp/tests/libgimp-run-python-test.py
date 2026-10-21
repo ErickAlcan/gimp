@@ -32,4 +32,6 @@ import pygimp.utils; pygimp.utils.gimp_test_filename = '{TEST_FILE}'"""
 with open(TEST_FILE, 'r') as f:
   content = f.readlines()
 cmd = header + ''.join(content[1:])
-subprocess.run([sys.executable, GIMP_EXE, "-nis", "--batch-interpreter", "python-fu-eval", "-b", cmd, "--quit"], check=True)
+sys.path.insert(0, PYGIMP_DIR)
+from pygimp.run import run_gimp_batch
+run_gimp_batch(GIMP_EXE, cmd)

@@ -456,7 +456,8 @@ gimp_drawable_equalize (GimpDrawable *drawable,
  * This tool makes it possible to gather information about the
  * intensity histogram of a drawable. A channel to examine is first
  * specified. This can be either value, red, green, or blue, depending
- * on whether the drawable is of type color or grayscale. Second, a
+ * on whether the drawable is of type color or grayscale; for CMYK
+ * drawables it can be value, cyan, magenta, yellow or black. Second, a
  * range of intensities are specified. The gimp_drawable_histogram()
  * function returns statistics based on the pixels in the drawable that
  * fall under this range of values. Mean, standard deviation, median,

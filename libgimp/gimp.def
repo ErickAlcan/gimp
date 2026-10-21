@@ -282,6 +282,7 @@ EXPORTS
 	gimp_drawable_histogram
 	gimp_drawable_hue_saturation
 	gimp_drawable_invert
+	gimp_drawable_is_cmyk
 	gimp_drawable_is_gray
 	gimp_drawable_is_indexed
 	gimp_drawable_is_rgb
@@ -444,6 +445,7 @@ EXPORTS
 	gimp_image_autocrop
 	gimp_image_autocrop_selected_layers
 	gimp_image_clean_all
+	gimp_image_convert_cmyk
 	gimp_image_convert_color_profile
 	gimp_image_convert_color_profile_from_file
 	gimp_image_convert_grayscale

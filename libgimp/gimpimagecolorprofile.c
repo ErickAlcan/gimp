@@ -248,3 +248,62 @@ gimp_image_convert_color_profile (GimpImage                 *image,
   g_bytes_unref (bytes);
   return ret;
 }
+
+/**
+ * gimp_image_convert_cmyk:
+ * @image:   The image.
+ * @profile: (nullable): The CMYK color profile of the converted image.
+ * @intent:  Rendering intent.
+ * @bpc:     Black point compensation.
+ *
+ * Converts an RGB, grayscale or indexed image to CMYK, using @profile
+ * as the CMYK profile of the result, or the default CMYK profile (the
+ * CMYK profile of the color management preferences, else GIMP's
+ * built-in CMYK profile) if @profile is %NULL.
+ *
+ * @profile must be a CMYK profile usable in both directions, see
+ * gimp_color_profile_is_cmyk_bidirectional(). The image's precision
+ * becomes non-linear if it was linear, and legacy layer modes are
+ * replaced by their non-legacy equivalent.
+ *
+ * Plug-ins that create CMYK images directly should rather use
+ * gimp_image_new_with_precision() with %GIMP_CMYK, then immediately
+ * gimp_image_set_color_profile() with a bidirectional CMYK profile,
+ * then gimp_layer_new() with %GIMP_CMYK_IMAGE or %GIMP_CMYKA_IMAGE,
+ * and write pixels in the format returned by gimp_drawable_get_format()
+ * (or an encoding-compatible CMYK format with the same babl space).
+ * Thumbnails and previews of CMYK drawables are sRGB.
+ *
+ * Returns: %TRUE on success.
+ *
+ * Since: 3.4
+ **/
+gboolean
+gimp_image_convert_cmyk (GimpImage                *image,
+                         GimpColorProfile         *profile,
+                         GimpColorRenderingIntent  intent,
+                         gboolean                  bpc)
+{
+  GBytes   *bytes = NULL;
+  gboolean  ret;
+
+  g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
+  g_return_val_if_fail (profile == NULL || GIMP_IS_COLOR_PROFILE (profile),
+                        FALSE);
+
+  if (profile)
+    {
+      const guint8 *data;
+      gsize         length;
+
+      data  = gimp_color_profile_get_icc_profile (profile, &length);
+      bytes = g_bytes_new_static (data, length);
+    }
+
+  ret = _gimp_image_convert_cmyk (image, bytes, intent, bpc);
+
+  if (bytes)
+    g_bytes_unref (bytes);
+
+  return ret;
+}

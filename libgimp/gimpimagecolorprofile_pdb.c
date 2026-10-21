@@ -83,7 +83,7 @@ _gimp_image_get_color_profile (GimpImage *image)
  * this image, which is the profile returned by
  * gimp_image_get_color_profile() if the image has a profile assigned,
  * or a generated default RGB or grayscale profile, according to the
- * image's type.
+ * image's type. CMYK images always have a CMYK profile assigned.
  *
  * Returns: (transfer full): The image's serialized color profile.
  *
@@ -125,6 +125,10 @@ _gimp_image_get_effective_color_profile (GimpImage *image)
  * conversion. However, it will change the pixel format of all layers
  * to contain the babl space matching the profile. You must call this
  * procedure before adding layers to the image.
+ *
+ * For a CMYK image, the profile must be a CMYK profile usable in both
+ * directions (with output tables), and passing NULL attaches the
+ * default CMYK profile instead of unsetting it.
  *
  * Returns: TRUE on success.
  *
@@ -478,8 +482,11 @@ gimp_image_set_simulation_bpc (GimpImage *image,
  *
  * This procedure converts from the image's color profile (or the
  * built-in RGB or grayscale profile if none is set) to the given color
- * profile. Only RGB and grayscale color profiles are accepted,
- * according to the image's type.
+ * profile. Only RGB, grayscale and CMYK color profiles are accepted,
+ * according to the image's type. If 'color_profile' is NULL, RGB and
+ * grayscale images are converted to the built-in profile, CMYK images
+ * to the default CMYK profile. Use [method@Gimp.Image.convert_cmyk] to
+ * change the image's type to CMYK.
  *
  * Returns: TRUE on success.
  *
@@ -525,7 +532,7 @@ _gimp_image_convert_color_profile (GimpImage                *image,
  *
  * This procedure converts from the image's color profile (or the
  * default RGB or grayscale profile if none is set) to an ICC profile
- * specified by 'file'. Only RGB and grayscale color profiles are
+ * specified by 'file'. Only RGB, grayscale and CMYK color profiles are
  * accepted, according to the image's type.
  *
  * Returns: TRUE on success.

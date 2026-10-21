@@ -45,6 +45,11 @@ gboolean           gimp_image_convert_color_profile       (GimpImage            
                                                            GimpColorRenderingIntent   intent,
                                                            gboolean                   bpc);
 
+gboolean           gimp_image_convert_cmyk                (GimpImage                 *image,
+                                                           GimpColorProfile          *profile,
+                                                           GimpColorRenderingIntent   intent,
+                                                           gboolean                   bpc);
+
 
 G_END_DECLS
 

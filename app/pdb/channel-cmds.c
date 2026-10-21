@@ -449,7 +449,7 @@ register_channel_procs (GimpPDB *pdb)
                                "gimp-channel-new-from-component");
   gimp_procedure_set_static_help (procedure,
                                   "Create a new channel from a color component",
-                                  "This procedure creates a new channel from a color component.\n"
+                                  "This procedure creates a new channel from a color component. The component must exist in the image's color model (for instance [enum@Gimp.ChannelType.CYAN] to [enum@Gimp.ChannelType.BLACK] for a CMYK image).\n"
                                   "\n"
                                   "The new channel still needs to be added to the image, as this is not automatic. Add the new channel with [method@Gimp.Image.insert_channel].\n"
                                   "\n"
