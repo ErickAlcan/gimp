@@ -272,8 +272,6 @@ static void       gimp_layer_real_transform     (GimpLayer          *layer,
                                                  GimpTransformResize clip_result,
                                                  GimpProgress       *progress,
                                                  gboolean            push_undo);
-static GimpLayerMode gimp_layer_get_non_legacy_mode (GimpLayerMode    mode);
-
 static void       gimp_layer_real_convert_type  (GimpLayer          *layer,
                                                  GimpImage          *dest_image,
                                                  const Babl         *new_format,
@@ -2239,43 +2237,6 @@ gimp_layer_exit_mask (GimpLoadState  *state,
 }
 
 
-/*  TODO: replace by gimp_layer_mode_get_non_legacy() (INTERFACES §8.2,
- *  owner 02) once that is merged; this is the same mapping
- */
-static GimpLayerMode
-gimp_layer_get_non_legacy_mode (GimpLayerMode mode)
-{
-  switch (mode)
-    {
-    case GIMP_LAYER_MODE_NORMAL_LEGACY:         return GIMP_LAYER_MODE_NORMAL;
-    case GIMP_LAYER_MODE_BEHIND_LEGACY:         return GIMP_LAYER_MODE_BEHIND;
-    case GIMP_LAYER_MODE_MULTIPLY_LEGACY:       return GIMP_LAYER_MODE_MULTIPLY;
-    case GIMP_LAYER_MODE_SCREEN_LEGACY:         return GIMP_LAYER_MODE_SCREEN;
-    case GIMP_LAYER_MODE_OVERLAY_LEGACY:        return GIMP_LAYER_MODE_OVERLAY;
-    case GIMP_LAYER_MODE_DIFFERENCE_LEGACY:     return GIMP_LAYER_MODE_DIFFERENCE;
-    case GIMP_LAYER_MODE_ADDITION_LEGACY:       return GIMP_LAYER_MODE_ADDITION;
-    case GIMP_LAYER_MODE_SUBTRACT_LEGACY:       return GIMP_LAYER_MODE_SUBTRACT;
-    case GIMP_LAYER_MODE_DARKEN_ONLY_LEGACY:    return GIMP_LAYER_MODE_DARKEN_ONLY;
-    case GIMP_LAYER_MODE_LIGHTEN_ONLY_LEGACY:   return GIMP_LAYER_MODE_LIGHTEN_ONLY;
-    case GIMP_LAYER_MODE_HSV_HUE_LEGACY:        return GIMP_LAYER_MODE_HSV_HUE;
-    case GIMP_LAYER_MODE_HSV_SATURATION_LEGACY: return GIMP_LAYER_MODE_HSV_SATURATION;
-    case GIMP_LAYER_MODE_HSL_COLOR_LEGACY:      return GIMP_LAYER_MODE_HSL_COLOR;
-    case GIMP_LAYER_MODE_HSV_VALUE_LEGACY:      return GIMP_LAYER_MODE_HSV_VALUE;
-    case GIMP_LAYER_MODE_DIVIDE_LEGACY:         return GIMP_LAYER_MODE_DIVIDE;
-    case GIMP_LAYER_MODE_DODGE_LEGACY:          return GIMP_LAYER_MODE_DODGE;
-    case GIMP_LAYER_MODE_BURN_LEGACY:           return GIMP_LAYER_MODE_BURN;
-    case GIMP_LAYER_MODE_HARDLIGHT_LEGACY:      return GIMP_LAYER_MODE_HARDLIGHT;
-    case GIMP_LAYER_MODE_SOFTLIGHT_LEGACY:      return GIMP_LAYER_MODE_SOFTLIGHT;
-    case GIMP_LAYER_MODE_GRAIN_EXTRACT_LEGACY:  return GIMP_LAYER_MODE_GRAIN_EXTRACT;
-    case GIMP_LAYER_MODE_GRAIN_MERGE_LEGACY:    return GIMP_LAYER_MODE_GRAIN_MERGE;
-    case GIMP_LAYER_MODE_COLOR_ERASE_LEGACY:    return GIMP_LAYER_MODE_COLOR_ERASE;
-
-    default:
-      return mode;
-    }
-}
-
-
 /*  public functions  */
 
 void
@@ -3085,7 +3046,7 @@ gimp_layer_set_mode (GimpLayer     *layer,
   image = gimp_item_get_image (GIMP_ITEM (layer));
 
   if (image && gimp_image_get_base_type (image) == GIMP_CMYK)
-    mode = gimp_layer_get_non_legacy_mode (mode);
+    mode = gimp_layer_mode_get_non_legacy (mode);
 
   if (gimp_viewable_get_children (GIMP_VIEWABLE (layer)) == NULL)
     {
@@ -3171,7 +3132,7 @@ gimp_layer_map_legacy_mode (GimpLayer *layer,
 
   g_return_val_if_fail (GIMP_IS_LAYER (layer), FALSE);
 
-  mode = gimp_layer_get_non_legacy_mode (layer->mode);
+  mode = gimp_layer_mode_get_non_legacy (layer->mode);
 
   if (mode == layer->mode)
     return FALSE;
