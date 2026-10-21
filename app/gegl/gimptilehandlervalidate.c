@@ -366,9 +366,10 @@ cmyk_render_format (const Babl *format,
   *n_components = babl_format_get_n_components (format);
   bpc           = babl_format_get_bytes_per_pixel (format) / *n_components;
 
-  if (bpc == 1)
+  /*  the component type, not only its size: "half" is 2 bytes too  */
+  if (bpc == 1 && babl_format_get_type (format, 0) == babl_type ("u8"))
     index = 0;
-  else if (bpc == 2)
+  else if (bpc == 2 && babl_format_get_type (format, 0) == babl_type ("u16"))
     index = 1;
   else
     return NULL;
