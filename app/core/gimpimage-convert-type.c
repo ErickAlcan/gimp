@@ -337,27 +337,11 @@ gimp_image_convert_type_non_linear (GimpPrecision precision)
                               GIMP_TRC_NON_LINEAR);
 }
 
-/*  INTERFACES §6 step 6; same as gimp_image_fix_layer_format_spaces()
- *  in gimpimage-color-profile.c, which is static
+/*  conversions to and from CMYK; the undo steps are pushed so that
+ *  undo first restores the drawables, then the profile, the base
+ *  type, the precision and finally the legacy layer modes, while the
+ *  image is no longer CMYK
  */
-static void
-gimp_image_convert_type_fix_layer_spaces (GimpImage *image)
-{
-  GList *layers;
-  GList *list;
-
-  layers = gimp_image_get_layer_list (image);
-
-  for (list = layers; list; list = g_list_next (list))
-    {
-      if (! gimp_viewable_get_children (list->data))
-        gimp_layer_fix_format_space (list->data, TRUE, TRUE);
-    }
-
-  g_list_free (layers);
-}
-
-/*  conversions to and from CMYK, undo push order per INTERFACES §6  */
 static gboolean
 gimp_image_convert_type_cmyk (GimpImage                *image,
                               GimpImageBaseType         new_type,
@@ -532,7 +516,7 @@ gimp_image_convert_type_cmyk (GimpImage                *image,
                                      TRUE);
 
   /*  step 6: safety net  */
-  gimp_image_convert_type_fix_layer_spaces (image);
+  _gimp_image_fix_layer_format_spaces (image, NULL);
 
   gimp_image_undo_group_end (image);
 
