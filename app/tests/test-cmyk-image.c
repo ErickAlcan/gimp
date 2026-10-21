@@ -18,13 +18,8 @@
 /* CMYK image tests I1-I15 (devel-docs/cmyk-mode/TESTING.md).
  * Owner: WS03.
  *
- * Parts that need other workstreams skip with a message naming the
- * workstream:
- *   - WS01b (lcms conversions honouring the intent): detected by the
- *     builtin CMYK profile still being the 01a stub;
- *   - WS02 (CMYK-native compositing: projections, anchoring): detected
- *     by the presence of gimp_layer_mode_is_cmyk_native() (weak symbol);
- *   - WS04 (XCF CMYK): detected by the XCF round trip failing.
+ * All parts run unconditionally since the integration of every
+ * workstream (WS09 removed the WS01b/WS02/WS04 detection gates).
  */
 
 #include "config.h"
@@ -91,9 +86,6 @@
 #include "gimp-app-test-utils.h"
 
 
-/*  WS02 detection: declared weak, NULL until WS02 is merged  */
-extern gboolean gimp_layer_mode_is_cmyk_native (GimpLayerMode mode) __attribute__((weak));
-
 #define W 16
 #define H 12
 
@@ -104,36 +96,6 @@ static Gimp *gimp = NULL;
 
 
 /*  helpers  */
-
-static gboolean
-have_ws01b (void)
-{
-  GimpColorProfile *builtin = gimp_color_profile_new_cmyk_builtin ();
-  gboolean          final;
-
-  final = ! strstr (gimp_color_profile_get_description (builtin), "(stub)");
-  g_object_unref (builtin);
-
-  return final;
-}
-
-static gboolean
-have_ws02 (void)
-{
-  return gimp_layer_mode_is_cmyk_native != NULL;
-}
-
-#define SKIP_UNLESS(cond, msg)              \
-  G_STMT_START {                            \
-    if (! (cond))                           \
-      {                                     \
-        g_test_skip (msg);                  \
-        return;                             \
-      }                                     \
-  } G_STMT_END
-
-#define NEED_WS01B() SKIP_UNLESS (have_ws01b (), "pending integration: needs WS01b (lcms CMYK conversions)")
-#define NEED_WS02()  SKIP_UNLESS (have_ws02 (),  "pending integration: needs WS02 (CMYK-native compositing)")
 
 static GimpContext *
 context (void)
@@ -532,7 +494,6 @@ i1_rgb_to_cmyk_lcms (void)
   GBytes           *result;
   GError           *error = NULL;
 
-  NEED_WS01B ();
 
   profile = builtin_cmyk ();
   srgb    = gimp_color_profile_new_rgb_srgb ();
@@ -882,7 +843,6 @@ static void
 i2_undo_redo_group (void)
 {
   /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
-  NEED_WS02 ();
 
   i2_undo_redo_full (TRUE);
 }
@@ -943,7 +903,6 @@ i3_cmyk_to_rgb_gray_lcms (void)
   guint16          *expected;
   gint              n = W * H;
 
-  NEED_WS01B ();
 
   cmyk = builtin_cmyk ();
   srgb = gimp_babl_get_builtin_color_profile (GIMP_RGB,  GIMP_TRC_NON_LINEAR);
@@ -1098,7 +1057,6 @@ i6_channel_from_component (void)
   GBytes      *expected;
   GBytes      *result;
 
-  NEED_WS02 ();
 
   image = new_cmyk_image (GIMP_PRECISION_U16_NON_LINEAR, NULL, &layer);
 
@@ -1417,7 +1375,6 @@ i9_same_image_paste_copy (void)
   /*  gimp_edit_copy() of a layer with a selection clears the
    *  unselected pixels of the clipboard image (compositing, WS02)
    */
-  NEED_WS02 ();
 
   image = new_cmyk_image (gimp_test_utils_cmyk_precision (), NULL, &layer);
   copy  = copy_selection (image, layer);
@@ -1457,7 +1414,6 @@ i9_same_image_floating (void)
   GimpLayer  *floating;
   GimpObject *copy;
 
-  NEED_WS02 ();
 
   image = new_cmyk_image (gimp_test_utils_cmyk_precision (), NULL, &layer);
 
@@ -1547,17 +1503,10 @@ i10_cross_image (void)
   assert_same_inks (GIMP_DRAWABLE (layer), NULL, GIMP_DRAWABLE (converted), NULL);
 
   /*  paste of a copied selection (clears the clipboard image, WS02)  */
-  if (have_ws02 ())
-    {
-      copy = copy_selection (a, layer);
-      pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
-      assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
-      g_object_unref (copy);
-    }
-  else
-    {
-      g_test_message ("I10: copy/paste of a selection pending WS02");
-    }
+  copy = copy_selection (a, layer);
+  pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
+  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+  g_object_unref (copy);
 
   /*  paste of a buffer tagged with A's profile  */
   buffer = buffer_from_layer (layer);
@@ -1594,20 +1543,15 @@ i10_open_as_layers (void)
     layers = file_open_layers (gimp, context (), NULL, b, FALSE, FALSE, file,
                                GIMP_RUN_NONINTERACTIVE, NULL, &status, &error);
 
-  if (! layers || status != GIMP_PDB_SUCCESS ||
-      ! gimp_drawable_is_cmyk (layers->data))
-    {
-      g_test_message ("open as layers: %s", error ? error->message : "no layers");
-      g_clear_error (&error);
-      g_test_skip ("pending integration: needs WS04 (XCF CMYK)");
-    }
-  else
-    {
-      g_assert_cmpint (g_list_length (layers), ==, 1);
+  g_assert_nonnull (file);
+  g_assert_no_error (error);
+  g_assert_cmpint (status, ==, GIMP_PDB_SUCCESS);
+  g_assert_nonnull (layers);
+  g_assert_true (gimp_drawable_is_cmyk (layers->data));
+  g_assert_cmpint (g_list_length (layers), ==, 1);
 
-      gimp_image_add_layer (b, layers->data, NULL, 0, FALSE);
-      assert_same_inks (GIMP_DRAWABLE (layer), NULL, layers->data, NULL);
-    }
+  gimp_image_add_layer (b, layers->data, NULL, 0, FALSE);
+  assert_same_inks (GIMP_DRAWABLE (layer), NULL, layers->data, NULL);
 
   g_list_free (layers);
 
@@ -1660,14 +1604,11 @@ i11_rgb_cmyk_paste (void)
     g_assert_cmpint (white[0] + white[1] + white[2] + white[3], <, 4 * 257);
   }
 
-  if (have_ws01b ())
-    {
-      lcms_transform (srgb, TYPE_RGB_16, rgb_patches,
-                      cmyk, TYPE_CMYK_16_NO_ALPHA, expected,
-                      N_RGB_PATCHES, INTENT_PERCEPTUAL, TRUE);
-      assert_u16_close (g_bytes_get_data (result, NULL), expected,
-                        N_RGB_PATCHES * 4, 2);
-    }
+  lcms_transform (srgb, TYPE_RGB_16, rgb_patches,
+                  cmyk, TYPE_CMYK_16_NO_ALPHA, expected,
+                  N_RGB_PATCHES, INTENT_PERCEPTUAL, TRUE);
+  assert_u16_close (g_bytes_get_data (result, NULL), expected,
+                    N_RGB_PATCHES * 4, 2);
   /*  pasting an RGB buffer into the CMYK image takes the same path
    *  (gimp_layer_new_from_buffer(), PERCEPTUAL + BPC)
    */
@@ -1718,23 +1659,18 @@ i11_rgb_cmyk_paste (void)
                                              GIMP_TYPE_LAYER));
   g_assert_cmpint (gimp_drawable_get_base_type (GIMP_DRAWABLE (converted)), ==, GIMP_RGB);
 
-  if (have_ws01b ())
-    {
-      guint16 *expected_rgb = g_new (guint16, W * 3);
+  {
+    guint16 *expected_rgb = g_new (guint16, W * 3);
 
-      lcms_transform (cmyk, TYPE_CMYK_16_NO_ALPHA, g_bytes_get_data (raw, NULL),
-                      srgb, TYPE_RGB_16, expected_rgb,
-                      W, INTENT_PERCEPTUAL, TRUE);
-      result = read_bytes (GIMP_DRAWABLE (converted), GEGL_RECTANGLE (0, 0, W, 1),
-                           babl_format ("R'G'B' u16"));
-      assert_u16_close (g_bytes_get_data (result, NULL), expected_rgb, W * 3, 2);
-      g_bytes_unref (result);
-      g_free (expected_rgb);
-    }
-  else
-    {
-      g_test_message ("I11: lcms comparison pending WS01b");
-    }
+    lcms_transform (cmyk, TYPE_CMYK_16_NO_ALPHA, g_bytes_get_data (raw, NULL),
+                    srgb, TYPE_RGB_16, expected_rgb,
+                    W, INTENT_PERCEPTUAL, TRUE);
+    result = read_bytes (GIMP_DRAWABLE (converted), GEGL_RECTANGLE (0, 0, W, 1),
+                         babl_format ("R'G'B' u16"));
+    assert_u16_close (g_bytes_get_data (result, NULL), expected_rgb, W * 3, 2);
+    g_bytes_unref (result);
+    g_free (expected_rgb);
+  }
 
   g_bytes_unref (raw);
   g_object_unref (converted);
@@ -1858,7 +1794,7 @@ i13_legacy_modes (void)
 {
   GimpImage *image;
   GimpLayer *layer;
-  GimpLayer *group = NULL;
+  GimpLayer *group;
   GError    *error = NULL;
 
   image = new_rgb_image (GIMP_PRECISION_U16_NON_LINEAR, TRUE, &layer);
@@ -1867,24 +1803,16 @@ i13_legacy_modes (void)
   gimp_layer_set_mode (layer, GIMP_LAYER_MODE_MULTIPLY_LEGACY, FALSE);
 
   /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
-  if (have_ws02 ())
-    {
-      group = gimp_group_layer_new (image);
-      gimp_image_add_layer (image, group, NULL, 0, FALSE);
-      gimp_layer_set_mode (group, GIMP_LAYER_MODE_SCREEN_LEGACY, FALSE);
-    }
-  else
-    {
-      g_test_message ("I13: legacy group layer modes pending WS02");
-    }
+  group = gimp_group_layer_new (image);
+  gimp_image_add_layer (image, group, NULL, 0, FALSE);
+  gimp_layer_set_mode (group, GIMP_LAYER_MODE_SCREEN_LEGACY, FALSE);
 
   gimp_image_undo_enable (image);
 
   g_assert_true (gimp_image_convert_type (image, GIMP_CMYK, NULL, NULL, &error));
   g_assert_no_error (error);
   g_assert_cmpint (gimp_layer_get_mode (layer), ==, GIMP_LAYER_MODE_MULTIPLY);
-  if (group)
-    g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN);
+  g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN);
 
   /*  setting a legacy mode on a layer of a CMYK image maps it  */
   gimp_layer_set_mode (layer, GIMP_LAYER_MODE_DIFFERENCE_LEGACY, TRUE);
@@ -1896,8 +1824,7 @@ i13_legacy_modes (void)
   g_assert_true (gimp_image_undo (image));
   g_assert_cmpint (gimp_image_get_base_type (image), ==, GIMP_RGB);
   g_assert_cmpint (gimp_layer_get_mode (layer), ==, GIMP_LAYER_MODE_MULTIPLY_LEGACY);
-  if (group)
-    g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN_LEGACY);
+  g_assert_cmpint (gimp_layer_get_mode (group), ==, GIMP_LAYER_MODE_SCREEN_LEGACY);
 
   /*  an RGB layer with a legacy mode dropped into a CMYK image  */
   {
