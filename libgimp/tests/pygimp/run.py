@@ -24,6 +24,29 @@ CRASH_MARKERS = [
 
 SUCCESS_MARKER = 'batch command executed successfully'
 
+def gimp_output(output):
+  '''
+  The output without the command dump of tools/in-build-gimp.py
+  ("RUNNING: <command line>", which contains the whole test script as
+  the -b argument, over many lines, up to the final --quit): a script
+  that mentions a crash marker, e.g. in a comment or a message string,
+  must not fail the test.
+  '''
+  lines = output.splitlines(keepends=True)
+  kept  = []
+  i     = 0
+
+  while i < len(lines):
+    if lines[i].startswith('RUNNING: '):
+      while i < len(lines) and not lines[i].rstrip().endswith('--quit'):
+        i += 1
+      i += 1
+      continue
+    kept.append(lines[i])
+    i += 1
+
+  return ''.join(kept)
+
 def run_gimp_batch(gimp_exe, cmd):
   args = [sys.executable, gimp_exe, '-nis', '--stack-trace-mode=never',
           '--batch-interpreter', 'python-fu-eval', '-b', cmd, '--quit']
@@ -35,7 +58,7 @@ def run_gimp_batch(gimp_exe, cmd):
   sys.stdout.flush()
   sys.stderr.flush()
 
-  output = proc.stdout + proc.stderr
+  output = proc.stdout + gimp_output(proc.stderr)
   errors = []
 
   if proc.returncode != 0:
