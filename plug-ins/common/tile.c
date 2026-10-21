@@ -382,6 +382,11 @@ tile (GimpImage     *image,
         case GIMP_INDEXEDA_IMAGE:
           image_type = GIMP_INDEXED;
           break;
+
+        case GIMP_CMYK_IMAGE:
+        case GIMP_CMYKA_IMAGE:
+          image_type = GIMP_CMYK;
+          break;
         }
 
       *new_image = gimp_image_new_with_precision (new_width,

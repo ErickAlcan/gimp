@@ -166,6 +166,7 @@ save_layer (TIFF        *tif,
   gboolean          config_save_resources;
   gboolean          config_save_profile;
   gboolean          config_cmyk;
+  gboolean          native_cmyk = FALSE;
   GimpFormat        config_format;
   GList            *channels;
   gushort           extra;
@@ -189,6 +190,17 @@ save_layer (TIFF        *tif,
   config_compression = gimp_procedure_config_get_choice_id (GIMP_PROCEDURE_CONFIG (config), "compression");
   compression = gimp_compression_to_tiff_compression (config_compression);
   config_format = gimp_procedure_config_get_choice_id (GIMP_PROCEDURE_CONFIG (config), "format");
+
+  /* CMYK images are exported natively (inks and image profile as they
+   * are); "Export as CMYK" is the RGB -> CMYK late binding conversion.
+   */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      native_cmyk = TRUE;
+      config_cmyk = FALSE;
+      /* Inks mean nothing without their profile: always embed it */
+      config_save_profile = TRUE;
+    }
 
   layer_name = gimp_item_get_name (GIMP_ITEM (layer));
 
@@ -475,6 +487,38 @@ save_layer (TIFF        *tif,
       g_free (cmap);
       break;
 
+    case GIMP_CMYK_IMAGE:
+      predictor       = 2;
+      samplesperpixel = 4 + extra;
+      photometric     = PHOTOMETRIC_SEPARATED;
+      alpha           = FALSE;
+      format = babl_format_new (babl_model ("CMYK"),
+                                type,
+                                babl_component ("Cyan"),
+                                babl_component ("Magenta"),
+                                babl_component ("Yellow"),
+                                babl_component ("Key"),
+                                NULL);
+      break;
+
+    case GIMP_CMYKA_IMAGE:
+      predictor       = 2;
+      samplesperpixel = 4 + 1 + extra;
+      photometric     = PHOTOMETRIC_SEPARATED;
+      alpha           = TRUE;
+      if (config_save_transp_pixels)
+        format = babl_format_new (babl_model ("CMYKA"),
+                                  type,
+                                  babl_component ("Cyan"),
+                                  babl_component ("Magenta"),
+                                  babl_component ("Yellow"),
+                                  babl_component ("Key"),
+                                  babl_component ("A"),
+                                  NULL);
+      else
+        format = tiff_cmyk_associated_format (type);
+      break;
+
     default:
       goto out;
     }
@@ -567,13 +611,17 @@ save_layer (TIFF        *tif,
 #endif
 
   /* Set CMYK Properties */
-  if (config_cmyk)
+  if (config_cmyk || native_cmyk)
     {
       photometric = PHOTOMETRIC_SEPARATED;
       /* If there's transparency, save as CMYKA format */
       samplesperpixel = 4 + alpha + extra;
       TIFFSetField (tif, TIFFTAG_INKSET, INKSET_CMYK);
-      TIFFSetField (tif, TIFFTAG_NUMBEROFINKS, 4);
+      /* Optional with InkSet CMYK; libtiff warns when it differs from
+       * SamplesPerPixel (alpha or extra channels), so skip it then.
+       */
+      if (samplesperpixel == 4)
+        TIFFSetField (tif, TIFFTAG_NUMBEROFINKS, 4);
     }
 
   /* Set TIFF parameters. */
@@ -699,7 +747,7 @@ save_layer (TIFF        *tif,
                                         "file",          temp_file,
                                         "image",         orig_image,
                                         "metadata-type", FALSE,
-                                        "cmyk",          config_cmyk,
+                                        "cmyk",          config_cmyk || native_cmyk,
                                         NULL);
 
       export_status = GIMP_VALUES_GET_ENUM (return_vals, 0);
@@ -740,7 +788,7 @@ save_layer (TIFF        *tif,
                                         "file",          temp_file,
                                         "image",         orig_image,
                                         "metadata-type", TRUE,
-                                        "cmyk",          config_cmyk,
+                                        "cmyk",          config_cmyk || native_cmyk,
                                         NULL);
 
       export_status = GIMP_VALUES_GET_ENUM (return_vals, 0);
@@ -831,6 +879,8 @@ save_layer (TIFF        *tif,
             case GIMP_GRAYA_IMAGE:
             case GIMP_RGB_IMAGE:
             case GIMP_RGBA_IMAGE:
+            case GIMP_CMYK_IMAGE:
+            case GIMP_CMYKA_IMAGE:
               {
                 mask_format = get_extra_format (bitspersample, sampleformat);
 
@@ -1084,6 +1134,7 @@ export_image (GFile         *file,
   gboolean    config_save_profile;
   gboolean    config_save_thumbnail;
   gboolean    config_cmyk;
+  gboolean    native_cmyk   = FALSE;
   GimpFormat  config_format;
 
   g_object_get (config,
@@ -1094,6 +1145,14 @@ export_image (GFile         *file,
                 NULL);
 
   config_format = gimp_procedure_config_get_choice_id (GIMP_PROCEDURE_CONFIG(config), "format");
+
+  /* Native CMYK export, see save_layer() */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      native_cmyk         = TRUE;
+      config_cmyk         = FALSE;
+      config_save_profile = TRUE;
+    }
 
   layers = gimp_image_list_layers (image);
   layers = g_list_reverse (layers);
@@ -1218,7 +1277,8 @@ export_image (GFile         *file,
   tif = NULL;
   /* TODO: Remove when gexiv2 supports BigTIFF metadata export */
   if (metadata && ! bigtiff)
-    save_metadata (file, config, image, metadata, saved_bpp, config_cmyk);
+    save_metadata (file, config, image, metadata, saved_bpp,
+                   config_cmyk || native_cmyk);
 
   /* write the remaining layers */
   if (num_layers > 1)
@@ -1299,6 +1359,7 @@ export_dialog (GimpImage     *image,
   gboolean           has_geotiff  = FALSE;
   gint               i;
   GimpColorProfile  *cmyk_profile = NULL;
+  GtkWidget         *cmyk_frame;
   GParamSpec        *compression_spec;
   GimpChoice        *compression_choice;
   GimpFormat         format;
@@ -1417,11 +1478,20 @@ export_dialog (GimpImage     *image,
                                   NULL);
 
   /* ...and make that box the content of a frame controlled by the "cmyk" toggle. */
-  gimp_procedure_dialog_fill_frame (GIMP_PROCEDURE_DIALOG (dialog),
-                                    "cmyk-frame",
-                                    "cmyk",
-                                    FALSE,
-                                    "cmyk-box");
+  cmyk_frame = gimp_procedure_dialog_fill_frame (GIMP_PROCEDURE_DIALOG (dialog),
+                                                 "cmyk-frame",
+                                                 "cmyk",
+                                                 FALSE,
+                                                 "cmyk-box");
+
+  /* CMYK images are always exported as CMYK, with their own profile:
+   * the soft-proofing conversion option does not apply.
+   */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      gtk_widget_set_no_show_all (cmyk_frame, TRUE);
+      gtk_widget_set_visible (cmyk_frame, FALSE);
+    }
 
   cmyk_profile = gimp_image_get_simulation_profile (image);
   if (cmyk_profile)

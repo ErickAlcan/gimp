@@ -233,7 +233,7 @@ tiff_create_procedure (GimpPlugIn  *plug_in,
                                              GIMP_PDB_PROC_TYPE_PLUGIN,
                                              TRUE, tiff_export, NULL, NULL);
 
-      gimp_procedure_set_image_types (procedure, "*");
+      gimp_procedure_set_image_types (procedure, "*, CMYK*");
 
       gimp_procedure_set_menu_label (procedure, _("TIFF or BigTIFF image"));
 
@@ -620,6 +620,7 @@ export_edit_options (GimpProcedure        *procedure,
       capabilities = (GIMP_EXPORT_CAN_HANDLE_RGB     |
                       GIMP_EXPORT_CAN_HANDLE_GRAY    |
                       GIMP_EXPORT_CAN_HANDLE_INDEXED |
+                      GIMP_EXPORT_CAN_HANDLE_CMYK    |
                       GIMP_EXPORT_CAN_HANDLE_ALPHA);
     }
 

@@ -817,6 +817,14 @@ export_fits (GFile        *file,
       naxis    = 4;
       naxes[2] = 4;
       break;
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      /* Not supported (refused in export_image(); the export options
+       * convert CMYK images to RGB as the exporter can't handle CMYK).
+       */
+      g_object_unref (buffer);
+      return FALSE;
     }
 
   channelnum = babl_format_get_n_components (format);

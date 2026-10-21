@@ -589,3 +589,30 @@ tiff_io_get_file_size (thandle_t handle)
 
   return (toff_t) size;
 }
+
+/* Premultiplied ("associated alpha") CMYKA with the given component
+ * type, without space. babl names the yellow component of its
+ * "CaMaYaKaA" model "Yea", so don't build it from component names
+ * when babl has the format registered.
+ */
+const Babl *
+tiff_cmyk_associated_format (const Babl *type)
+{
+  gchar      *name   = g_strdup_printf ("CaMaYaKaA %s", babl_get_name (type));
+  const Babl *format;
+
+  if (babl_format_exists (name))
+    format = babl_format (name);
+  else
+    format = babl_format_new (babl_model ("CaMaYaKaA"),
+                              type,
+                              babl_component ("Ca"),
+                              babl_component ("Ma"),
+                              babl_component ("Yea"),
+                              babl_component ("Ka"),
+                              babl_component ("A"),
+                              NULL);
+  g_free (name);
+
+  return format;
+}
