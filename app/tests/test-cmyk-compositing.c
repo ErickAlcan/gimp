@@ -437,7 +437,88 @@ c1_k_preservation (gconstpointer data)
 }
 
 
-/*  C2: Multiply against a babl reference  */
+/* independent implementation of the converter design (INTERFACES §8.5),
+ * used as reference by C2 and C10
+ */
+static void
+reference_transform (GimpImage    *image,
+                     gboolean      to_rgb,
+                     const Babl   *blend_format,
+                     const gfloat *src,
+                     gfloat       *dest,
+                     gint          n)
+{
+  GimpColorProfile   *cmyk_profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
+  GimpColorProfile   *srgb_profile = gimp_color_profile_new_rgb_srgb ();
+  const Babl         *cmyka_float  = cmyk_format (image, "CMYKA float");
+  const Babl         *cmyka_u16    = cmyk_format (image, "CMYKA u16");
+  const Babl         *rgba_u16     = babl_format ("R'G'B'A u16");
+  GimpColorTransform *transform;
+  guint16            *a16 = g_new (guint16, n * 5);
+  guint16            *b16 = g_new (guint16, n * 5);
+  gint                i;
+
+  if (to_rgb)
+    {
+      transform = gimp_color_transform_new (cmyk_profile, cmyka_u16,
+                                            srgb_profile, rgba_u16,
+                                            GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                            GIMP_COLOR_TRANSFORM_FLAGS_BLACK_POINT_COMPENSATION);
+      g_assert_nonnull (transform);
+
+      babl_process (babl_fish (cmyka_float, cmyka_u16), src, a16, n);
+      gimp_color_transform_process_pixels (transform, cmyka_u16, a16,
+                                           rgba_u16, b16, n);
+      babl_process (babl_fish (rgba_u16, blend_format), b16, dest, n);
+
+      for (i = 0; i < n; i++)
+        dest[i * 4 + 3] = src[i * 5 + 4];
+    }
+  else
+    {
+      transform = gimp_color_transform_new (srgb_profile, rgba_u16,
+                                            cmyk_profile, cmyka_u16,
+                                            GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                            GIMP_COLOR_TRANSFORM_FLAGS_BLACK_POINT_COMPENSATION);
+      g_assert_nonnull (transform);
+
+      babl_process (babl_fish (blend_format, rgba_u16), src, a16, n);
+      gimp_color_transform_process_pixels (transform, rgba_u16, a16,
+                                           cmyka_u16, b16, n);
+      babl_process (babl_fish (cmyka_u16, cmyka_float), b16, dest, n);
+
+      for (i = 0; i < n; i++)
+        dest[i * 5 + 4] = src[i * 4 + 3];
+    }
+
+  g_object_unref (transform);
+  g_object_unref (srgb_profile);
+  g_free (a16);
+  g_free (b16);
+}
+
+static void
+reference_to_blend (GimpImage    *image,
+                    const Babl   *blend_format,
+                    const gfloat *cmyka,
+                    gfloat       *blend,
+                    gint          n)
+{
+  reference_transform (image, TRUE, blend_format, cmyka, blend, n);
+}
+
+static void
+reference_from_blend (GimpImage    *image,
+                      const Babl   *blend_format,
+                      const gfloat *blend,
+                      gfloat       *cmyka,
+                      gint          n)
+{
+  reference_transform (image, FALSE, blend_format, blend, cmyka, n);
+}
+
+
+/*  C2: Multiply against the converter design  */
 
 static void
 c2_multiply (void)
@@ -474,7 +555,10 @@ c2_multiply (void)
   assert_rect_identical (image, projection_buffer (image),
                          drawable_buffer (bg), &right, "C2 right half");
 
-  /* reference: babl CMYKA float -> RGBA float (sRGB), multiply, back */
+  /* reference: the design of INTERFACES §8.5, built independently of the
+   * op: CMYKA u16 -> R'G'B'A u16 sRGB (GimpColorTransform, relcol + BPC),
+   * linear RGB multiply, back the same way
+   */
   cmyka_float = cmyk_format (image, "CMYKA float");
 
   bg_data  = gimp_test_utils_read_patch (drawable_buffer (bg),  &left, cmyka_float);
@@ -485,35 +569,29 @@ c2_multiply (void)
   layer_rgb = g_new (gfloat, n * 4);
   ref       = g_new (gfloat, n * 5);
 
-  babl_process (babl_fish (cmyka_float, babl_format ("RGBA float")),
-                bg_data, in_rgb, n);
-  babl_process (babl_fish (cmyka_float, babl_format ("RGBA float")),
-                top_data, layer_rgb, n);
+  reference_to_blend (image, babl_format ("RGBA float"), bg_data,  in_rgb,    n);
+  reference_to_blend (image, babl_format ("RGBA float"), top_data, layer_rgb, n);
 
-  /* the op blends 16 bit sRGB (INTERFACES §8.5): out-of-gamut values are
-   * clipped, so clip the reference too
-   */
   for (i = 0; i < n; i++)
     {
       gint c;
 
       for (c = 0; c < 3; c++)
-        in_rgb[i * 4 + c] = CLAMP (in_rgb[i * 4 + c],    0.0f, 1.0f) *
-                            CLAMP (layer_rgb[i * 4 + c], 0.0f, 1.0f);
+        in_rgb[i * 4 + c] *= layer_rgb[i * 4 + c];
 
       in_rgb[i * 4 + 3] = 1.0f;
     }
 
-  babl_process (babl_fish (babl_format ("RGBA float"), cmyka_float),
-                in_rgb, ref, n);
+  reference_from_blend (image, babl_format ("RGBA float"), in_rgb, ref, n);
 
   for (i = 0; i < n * 5; i++)
     max_diff = MAX (max_diff, fabs (out[i] - ref[i]));
 
-  g_printerr ("C2: max |multiply - babl reference| = %.2f/255\n",
-              max_diff * 255.0);
+  g_printerr ("C2: max |multiply - reference| = %.2f/65535\n",
+              max_diff * 65535.0);
 
-  g_assert_cmpfloat (max_diff, <=, 3.0 / 255.0);
+  /* the projection is u16: allow rounding of the result */
+  g_assert_cmpfloat (max_diff, <=, 1.5 * U16_STEP);
 
   g_free (in_rgb);
   g_free (layer_rgb);
@@ -1312,40 +1390,43 @@ c10_converter (void)
       gdouble     max_to   = 0.0;
       gdouble     max_from = 0.0;
 
-      /* CMYK -> blend */
+      gdouble     max_babl = 0.0;
+
+      /* CMYK -> blend, against the independent reference */
       gimp_layer_mode_cmyk_converter_to_blend (conv, format, cmyk, blend, n);
-      babl_process (babl_fish (cmyka_float, format), cmyk, ref, n);
+      reference_to_blend (image, format, cmyk, ref, n);
 
-      /* the converter works on 16 bit sRGB: out-of-gamut values (the
-       * builtin's paper is slightly brighter than sRGB white) are clipped,
-       * compare against the clipped reference
-       */
       for (i = 0; i < n * 4; i++)
-        {
-          if (i % 4 != 3)
-            ref[i] = CLAMP (ref[i], 0.0f, 1.0f);
-
-          max_to = MAX (max_to, fabs (blend[i] - ref[i]));
-        }
+        max_to = MAX (max_to, fabs (blend[i] - ref[i]));
 
       /* alpha is exact */
       for (i = 0; i < n; i++)
         g_assert_cmpfloat (blend[i * 4 + 3], ==, cmyk[i * 5 + 4]);
 
-      /* blend -> CMYK, on the babl blend values */
+      /* informational: drift against babl's own CMYK conversion (clipped:
+       * the converter works on 16 bit sRGB)
+       */
+      babl_process (babl_fish (cmyka_float, format), cmyk, out, n);
+      for (i = 0; i < n * 4; i++)
+        if (i % 4 != 3)
+          max_babl = MAX (max_babl, fabs (blend[i] - CLAMP (out[i], 0.0f, 1.0f)));
+
+      /* blend -> CMYK, on the reference blend values */
       memcpy (blend, ref, n * 4 * sizeof (gfloat));
 
       gimp_layer_mode_cmyk_converter_from_blend (conv, format, blend, out, n);
-      babl_process (babl_fish (format, cmyka_float), blend, ref, n);
+      reference_from_blend (image, format, blend, ref, n);
 
       for (i = 0; i < n * 5; i++)
         max_from = MAX (max_from, fabs (out[i] - ref[i]));
 
-      g_printerr ("C10: %s: to blend %.2f/255, from blend %.2f/255\n",
-                  blend_formats[f], max_to * 255.0, max_from * 255.0);
+      g_printerr ("C10: %s: to blend %.2f/65535, from blend %.2f/65535 "
+                  "(vs babl: %.2f/255)\n",
+                  blend_formats[f], max_to * 65535.0, max_from * 65535.0,
+                  max_babl * 255.0);
 
-      g_assert_cmpfloat (max_to,   <=, 2.0 / 255.0);
-      g_assert_cmpfloat (max_from, <=, 2.0 / 255.0);
+      g_assert_cmpfloat (max_to,   <=, 1e-6);
+      g_assert_cmpfloat (max_from, <=, 1e-6);
     }
 
   g_free (cmyk);
