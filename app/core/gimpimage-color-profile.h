@@ -129,3 +129,6 @@ void                 _gimp_image_update_color_profile  (GimpImage           *ima
 void                 _gimp_image_update_simulation_profile
                                                        (GimpImage           *image,
                                                         const GimpParasite  *icc_parasite);
+void                 _gimp_image_fix_layer_format_spaces
+                                                       (GimpImage           *image,
+                                                        GimpProgress        *progress);

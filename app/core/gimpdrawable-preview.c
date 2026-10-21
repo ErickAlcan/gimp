@@ -180,7 +180,7 @@ gimp_drawable_get_preview_format (GimpDrawable *drawable)
                                alpha, space);
 
     case GIMP_CMYK:
-      /*  INTERFACES §10: previews of CMYK drawables are sRGB  */
+      /*  previews of CMYK drawables are sRGB, NULL space  */
       return babl_format (alpha ? "R'G'B'A u8" : "R'G'B' u8");
     }
 

@@ -645,7 +645,7 @@ gimp_image_exit_format (GimpLoadState  *state,
   image_type = gimp_babl_format_get_base_type (format);
   precision  = gimp_babl_format_get_precision (format);
 
-  /*  the preconditions of gimp_image_new() (INTERFACES §4, m6)  */
+  /*  the preconditions of gimp_image_new()  */
   if (image_type == GIMP_CMYK && ! gimp_babl_has_cmyk_support ())
     {
       GIMP_SAVABLE_LOAD_ERROR (error, GIMP_WLBR_ERROR_DATA, ;,

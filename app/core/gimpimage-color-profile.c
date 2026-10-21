@@ -70,8 +70,6 @@ static void   gimp_image_convert_profile_colormap (GimpImage                *ima
                                                    gboolean                  bpc,
                                                    GimpProgress             *progress);
 
-static void   gimp_image_fix_layer_format_spaces  (GimpImage                *image,
-                                                   GimpProgress             *progress);
 
 static void   gimp_image_create_color_transforms  (GimpImage                *image);
 
@@ -690,7 +688,7 @@ gimp_image_assign_color_profile (GimpImage         *image,
   /*  for CMYK images too, assigning is a relabeling: the ink values
    *  are kept, only the layer formats' space changes
    */
-  gimp_image_fix_layer_format_spaces (image, progress);
+  _gimp_image_fix_layer_format_spaces (image, progress);
 
   gimp_image_undo_group_end (image);
 
@@ -761,7 +759,7 @@ gimp_image_convert_color_profile (GimpImage                *image,
                                            src_profile, dest_profile,
                                            intent, bpc,
                                            progress);
-      gimp_image_fix_layer_format_spaces (image, progress);
+      _gimp_image_fix_layer_format_spaces (image, progress);
       break;
     }
 
@@ -1167,9 +1165,9 @@ gimp_image_convert_profile_colormap (GimpImage                *image,
   gimp_palette_restrict_format (palette, format, TRUE);
 }
 
-static void
-gimp_image_fix_layer_format_spaces (GimpImage    *image,
-                                    GimpProgress *progress)
+void
+_gimp_image_fix_layer_format_spaces (GimpImage    *image,
+                                     GimpProgress *progress)
 {
   GimpObjectQueue *queue;
   GList           *layers;

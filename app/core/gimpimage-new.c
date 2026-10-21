@@ -135,7 +135,7 @@ gimp_image_new_from_template (Gimp         *gimp,
     {
       if (! gimp_babl_has_cmyk_support ())
         {
-          /*  callers gate CMYK; be total anyway (m6)  */
+          /*  callers gate CMYK; be total anyway  */
           gimp_message_literal (gimp, NULL, GIMP_MESSAGE_WARNING,
                                 _("CMYK images are not supported: babl was "
                                   "built without LCMS support. Creating an "

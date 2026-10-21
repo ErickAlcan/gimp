@@ -248,7 +248,7 @@ gimp_buffer_get_new_preview (GimpViewable *viewable,
                                babl_format_has_alpha (format),
                                babl_format_get_space (format));
   else if (gimp_babl_format_is_cmyk (format))
-    /*  INTERFACES §10: previews of CMYK data are sRGB  */
+    /*  previews of CMYK data are sRGB, NULL space  */
     format = babl_format (babl_format_has_alpha (format) ?
                           "R'G'B'A u8" : "R'G'B' u8");
   else

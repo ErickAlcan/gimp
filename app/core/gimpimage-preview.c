@@ -52,7 +52,7 @@ gimp_image_get_preview_format (GimpImage *image)
       return babl_format ("R'G'B'A u8");
 
     case GIMP_CMYK:
-      /*  INTERFACES §10: previews of CMYK images are sRGB  */
+      /*  previews of CMYK images are sRGB, NULL space  */
       return babl_format ("R'G'B'A u8");
     }
 

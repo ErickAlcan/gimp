@@ -16,10 +16,6 @@
  */
 
 /* CMYK image tests I1-I15 (devel-docs/cmyk-mode/TESTING.md).
- * Owner: WS03.
- *
- * All parts run unconditionally since the integration of every
- * workstream (WS09 removed the WS01b/WS02/WS04 detection gates).
  */
 
 #include "config.h"
@@ -842,7 +838,7 @@ i2_undo_redo (void)
 static void
 i2_undo_redo_group (void)
 {
-  /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
+  /*  group layers are converted by gimp_group_layer_convert_type()  */
 
   i2_undo_redo_full (TRUE);
 }
@@ -1415,7 +1411,8 @@ i9_same_image_paste_copy (void)
   gint          off_x, off_y;
 
   /*  gimp_edit_copy() of a layer with a selection clears the
-   *  unselected pixels of the clipboard image (compositing, WS02)
+   *  unselected pixels of the clipboard image, which must leave the
+   *  selected pixels bit-identical
    */
 
   image = new_cmyk_image (gimp_test_utils_cmyk_precision (), NULL, &layer);
@@ -1546,7 +1543,7 @@ i10_cross_image (void)
   gimp_image_add_layer (b, converted, NULL, 0, FALSE);
   assert_same_inks (GIMP_DRAWABLE (layer), NULL, GIMP_DRAWABLE (converted), NULL);
 
-  /*  paste of a copied selection (clears the clipboard image, WS02)  */
+  /*  paste of a copied selection (clears the clipboard image outside it)  */
   copy = copy_selection (a, layer);
   pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
   assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
@@ -1847,7 +1844,7 @@ i13_legacy_modes (void)
   gimp_image_undo_disable (image);
   gimp_layer_set_mode (layer, GIMP_LAYER_MODE_MULTIPLY_LEGACY, FALSE);
 
-  /*  group layer conversion is gimp_group_layer_convert_type() (WS02)  */
+  /*  group layers are converted by gimp_group_layer_convert_type()  */
   group = gimp_group_layer_new (image);
   gimp_image_add_layer (image, group, NULL, 0, FALSE);
   gimp_layer_set_mode (group, GIMP_LAYER_MODE_SCREEN_LEGACY, FALSE);
@@ -1883,6 +1880,53 @@ i13_legacy_modes (void)
     g_object_unref (cmyk);
   }
 
+  g_object_unref (image);
+}
+
+
+static void
+i13_legacy_mapping_table (void)
+{
+  GimpImage  *image;
+  GimpLayer  *layer;
+  GEnumClass *klass;
+  gint        n_legacy = 0;
+  guint       i;
+
+  image = new_rgb_image (GIMP_PRECISION_U16_NON_LINEAR, TRUE, &layer);
+  klass = g_type_class_ref (GIMP_TYPE_LAYER_MODE);
+
+  for (i = 0; i < klass->n_values; i++)
+    {
+      GimpLayerMode mode = klass->values[i].value;
+
+      if (! gimp_layer_mode_is_legacy (mode))
+        continue;
+
+      n_legacy++;
+
+      g_assert_false (gimp_layer_mode_is_legacy (gimp_layer_mode_get_non_legacy (mode)));
+
+      /*  paint-only legacy modes can't be set on layers  */
+      if (! (gimp_layer_mode_get_context (mode) & GIMP_LAYER_MODE_CONTEXT_LAYER))
+        continue;
+
+      /*  RGB image: the legacy mode is kept  */
+      gimp_layer_set_mode (layer, mode, FALSE);
+      g_assert_cmpint (gimp_layer_get_mode (layer), ==, mode);
+
+      g_assert_true (gimp_layer_map_legacy_mode (layer, FALSE));
+      g_assert_cmpint (gimp_layer_get_mode (layer), ==,
+                       gimp_layer_mode_get_non_legacy (mode));
+      g_assert_false (gimp_layer_mode_is_legacy (gimp_layer_get_mode (layer)));
+
+      /*  idempotent  */
+      g_assert_false (gimp_layer_map_legacy_mode (layer, FALSE));
+    }
+
+  g_assert_cmpint (n_legacy, ==, 22);
+
+  g_type_class_unref (klass);
   g_object_unref (image);
 }
 
@@ -2000,6 +2044,7 @@ main (int    argc,
   g_test_add_func ("/cmyk-image/I11/rgb-cmyk-paste",        i11_rgb_cmyk_paste);
   g_test_add_func ("/cmyk-image/I12/geometry",              i12_geometry);
   g_test_add_func ("/cmyk-image/I13/legacy-modes",          i13_legacy_modes);
+  g_test_add_func ("/cmyk-image/I13/legacy-mapping-table",  i13_legacy_mapping_table);
   g_test_add_func ("/cmyk-image/I14/component-state",       i14_component_state);
   g_test_add_func ("/cmyk-image/I15/previews",              i15_previews);
 

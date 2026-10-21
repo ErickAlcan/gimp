@@ -242,7 +242,7 @@ gimp_layer_new_convert_buffer (GimpLayer         *layer,
   dest_profile =
     gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (layer));
 
-  /*  same-profile copies are exact (INTERFACES §11, I8): with equal
+  /*  same-profile copies are exact: with equal
    *  profiles both buffers share one babl space, a plain copy only
    *  re-encodes
    */
