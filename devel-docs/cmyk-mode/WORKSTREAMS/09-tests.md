@@ -62,7 +62,7 @@ MVP status, test matrix and limitations: `devel-docs/cmyk-mode/STATUS.md`.
     bit-identically in `CMYKA float` for DOUBLE/U32, byte-exact otherwise.
 
 **2. Babl probe and no-support tests**
-* `cmyk-babl-probe.py` (Tier A #4): 99 ctypes checks — CMYK(A) for u8/u16/u32/half/float/double
+* `cmyk-babl-probe.py` (Tier A #4): 95 ctypes checks — CMYK(A) for u8/u16/u32/half/float/double
   (components, bpp, CMYK model flag, alpha), cmyk/cmykA/CaMaYaKaA/camayakaA models,
   `CaMaYaKaA double` exists (u32 reported missing), builtin space is CMYK, I5 identities
   (CMYK u8/u16/float without ↔ with space bit-identical on 1000 random pixels; `R'G'B'A float`
