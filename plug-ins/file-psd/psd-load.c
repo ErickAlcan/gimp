@@ -1798,9 +1798,11 @@ peek_icc_profile (PSDimage      *img_a,
 
       if (res_a.id == PSD_ICC_PROFILE && res_a.data_len > 0)
         {
-          guint8 *icc = g_malloc (res_a.data_len);
+          /* The length comes from the file: don't abort on a huge one */
+          guint8 *icc = g_try_malloc (res_a.data_len);
 
-          if (psd_read (input, icc, res_a.data_len, &err) == res_a.data_len)
+          if (icc &&
+              psd_read (input, icc, res_a.data_len, &err) == res_a.data_len)
             profile = gimp_color_profile_new_from_icc_profile (icc,
                                                                res_a.data_len,
                                                                NULL);
@@ -2801,6 +2803,7 @@ add_layers (GimpImage     *image,
   gboolean              alpha;
   gboolean              user_mask;
   gboolean              empty;
+  gboolean              missing_channels;
   gboolean              empty_mask;
   gboolean              no_draw_layer   = FALSE;
   GeglBuffer           *buffer;
@@ -3005,6 +3008,7 @@ add_layers (GimpImage     *image,
       user_mask = FALSE;
       user_mask_chn = -1;
       layer_channels = 0;
+      memset (channel_idx, 0, sizeof (channel_idx));
       l_x = 0;
       l_y = 0;
       l_w = img_a->columns;
@@ -3084,6 +3088,12 @@ add_layers (GimpImage     *image,
               IFDBG(4) g_debug ("Channel %d (id: %d) has no data", cidx, lyr_chn[cidx]->id);
             }
         }
+
+      /* A layer needs all color channels of the mode (a crafted file
+       * may have e.g. only C and M in a CMYK file): drawing it would
+       * read unset channel_idx[] entries.
+       */
+      missing_channels = (layer_channels < base_channels);
 
       if (alpha)
         {
@@ -3380,7 +3390,18 @@ add_layers (GimpImage     *image,
             {
               IFDBG(3) g_debug ("Draw layer");
 
-              if (empty)
+              if (missing_channels && ! empty)
+                {
+                  g_message (_("Layer '%s' does not have all color channels "
+                               "of the image mode; it is left empty."),
+                             lyr_a[lidx]->name ? lyr_a[lidx]->name : "");
+
+                  for (cidx = 0; cidx < layer_channels; ++cidx)
+                    g_clear_pointer (&lyr_chn[channel_idx[cidx]]->data, g_free);
+
+                  gimp_drawable_fill (GIMP_DRAWABLE (layer), GIMP_FILL_TRANSPARENT);
+                }
+              else if (empty)
                 {
                   gimp_drawable_fill (GIMP_DRAWABLE (layer), GIMP_FILL_TRANSPARENT);
                 }

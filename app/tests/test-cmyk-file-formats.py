@@ -441,5 +441,53 @@ def hostile_tiff_spp():
     gimp_assert(f"hostile TIFF spp={spp}: refused (no image)", loaded is None)
 
 
+def write_cmyk_psd(path, layer_channel_ids, w=4, h=4):
+  '''8-bit CMYK PSD (4 merged channels) with one layer made of the given
+  channel ids (0..3 = C, M, Y, K, -1 = alpha), all channels zero.'''
+  rec  = struct.pack('>iiii', 0, 0, h, w)
+  rec += struct.pack('>H', len(layer_channel_ids))
+  for cid in layer_channel_ids:
+    rec += struct.pack('>hI', cid, 2 + w * h)
+  rec += b'8BIM' + b'norm' + bytes([255, 0, 0, 0])
+  extra = struct.pack('>I', 0) + struct.pack('>I', 0) + b'\x01L\0\0'
+  rec += struct.pack('>I', len(extra)) + extra
+  chdata = b''.join(struct.pack('>H', 0) + bytes(w * h) for _ in layer_channel_ids)
+  info = struct.pack('>h', 1) + rec + chdata
+  if len(info) % 2:
+    info += b'\0'
+  layers = struct.pack('>I', len(info)) + info + struct.pack('>I', 0)
+
+  hdr = b'8BPS' + struct.pack('>H', 1) + b'\0' * 6 + \
+        struct.pack('>HIIHH', 4, h, w, 8, 4)          # 4 channels, CMYK mode
+  with open(path, 'wb') as f:
+    f.write(hdr + struct.pack('>I', 0) + struct.pack('>I', 0) +
+            struct.pack('>I', len(layers)) + layers +
+            struct.pack('>H', 0) + bytes(w * h * 4))
+
+def hostile_psd_layer_channels():
+  # Control: a complete C, M, Y, K, alpha layer
+  path = os.path.join(tmpdir, 'cmyk-hostile-layer-control.psd')
+  write_cmyk_psd(path, [0, 1, 2, 3, -1])
+  loaded = load(path)
+  gimp_assert("PSD control layer: loads as CMYK",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  loaded.delete()
+
+  # A layer with only C, M and alpha in a CMYK file
+  path = os.path.join(tmpdir, 'cmyk-hostile-layer-2ch.psd')
+  write_cmyk_psd(path, [0, 1, -1])
+  loaded = load(path)
+  gimp_assert("hostile PSD layer with 2 of 4 inks: loads",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  layers = loaded.get_layers()
+  gimp_assert("hostile PSD layer: kept, left transparent",
+              len(layers) == 1 and layers[0].has_alpha() and
+              max(read_pixels(layers[0], 'CMYKA u8')[4::5]) == 0)
+  loaded.delete()
+
+
 run_tests()
 hostile_tiff_spp()
+hostile_psd_layer_channels()
