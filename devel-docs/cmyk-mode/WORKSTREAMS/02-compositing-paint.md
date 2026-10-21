@@ -140,3 +140,26 @@ Requests for other owners
 * `gimp-babl.c` (01a/01b) or babl upstream: fast CMYK(A) u8/u16 <-> CMYKA float conversions for
   space-tagged formats (P2).
 
+
+**Integration re-run** (ws/02 fast-forwarded to cmyk-mode 808c81a: all workstreams incl. 06;
+01b's lcms CMYK path and the `gimp_color_set_alpha()` fix live)
+* C2/C10 now compare against an independent implementation of the §8.5 design (test-side
+  `GimpColorTransform`s, image profile <-> sRGB, relcol + BPC, 16 bit) instead of babl: C2 max
+  0.00/65535 (assert <= 1.5 u16 steps), C10 0.00/65535 (assert <= 1e-6) for RGBA, R'G'B'A and
+  R~G~B~A float. Informational drift of the converter against babl's own CMYK conversion:
+  <= 0.04/255 in RGB; the old C2 failure (12/255) was babl vs lcms disagreeing on the RGB -> CMYK
+  re-separation of the final profile, not a compositing error.
+* `cmyk-compositing`: all 18 tests pass, including the previously skipped C4, C5, C8 and the C9
+  "centre == FG" check; knob runs u8, half, double pass. No warnings/criticals.
+* `layer-modes-golden`, `cmyk-image`, `xcf`: OK (cmyk-image skips only I1's optional
+  `GIMP_TESTING_CMYK_ICC` variant).
+* Full suite: 28 OK, 1 SKIP (babl probe), 2 FAIL: `appdata_file` (network) and
+  `cmyk-file-formats` (06: E3 "JPEG export" fails, libjpeg "Bogus marker length"; not in 02 code).
+* **P1 (lcms path): 1.247 s** (target <= 1.5 s, met).
+* **P2: CMYK 0.269 s vs RGB 0.148 s = 1.83x** (target 1.5x, missed). Remaining cost: babl has no
+  fast path for space-tagged `CMYK(A) u16 <-> CMYKA float` (microbenchmark, 4 Mpx, one thread:
+  `CMYK u16 -> CMYKA float` 0.39 s, `CMYKA float -> CMYKA u16` 0.18 s, vs `R'G'B' u16 -> R'G'B'A
+  float` 0.03 s); the Normal composite itself (generic 5-component loop) is minor. A
+  `babl_conversion_new()` for the space-less formats drops the first to 0.04 s, but babl does not
+  use it for formats tagged with a CMYK space. Fix belongs in babl (or a gimp-babl registration
+  hook per CMYK space if babl allows one).
