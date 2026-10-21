@@ -29,6 +29,8 @@
 
 #include <string.h>
 
+#include <glib/gstdio.h>
+
 #include <gegl.h>
 #include <gtk/gtk.h>
 
@@ -634,15 +636,49 @@ mode_cmyk_convert (gconstpointer data)
   g_assert_false (action_sensitive (gimp, "image-convert-linear"));
 }
 
+/*  gui_init() writes these into the configuration directory, which is
+ *  the source tree's app/tests/gimpdir while the tests run: remove the
+ *  ones this run created
+ */
+static const gchar *written_files[] = { "theme.css", "profilerc" };
+
+static GList *
+files_to_clean (void)
+{
+  const gchar *srcdir = g_getenv ("GIMP_TESTING_ABS_TOP_SRCDIR");
+  GList       *files  = NULL;
+  gint         i;
+
+  if (! srcdir)
+    return NULL;
+
+  for (i = 0; i < G_N_ELEMENTS (written_files); i++)
+    {
+      gchar *path = g_build_filename (srcdir, "app", "tests", "gimpdir",
+                                      written_files[i], NULL);
+
+      if (! g_file_test (path, G_FILE_TEST_EXISTS))
+        files = g_list_prepend (files, path);
+      else
+        g_free (path);
+    }
+
+  return files;
+}
+
 int
 main (int    argc,
       char **argv)
 {
-  Gimp *gimp   = NULL;
-  gint  result = -1;
+  Gimp  *gimp   = NULL;
+  gint   result = -1;
+  GList *clean;
+  GList *list;
 
   gimp_test_bail_if_no_display ();
   gtk_test_init (&argc, &argv, NULL);
+
+  clean = files_to_clean ();
 
   gimp_test_utils_setup_menus_path ();
 
@@ -666,6 +702,10 @@ main (int    argc,
 
   g_application_quit (G_APPLICATION (gimp->app));
   g_clear_object (&gimp->app);
+
+  for (list = clean; list; list = list->next)
+    g_unlink (list->data);
+  g_list_free_full (clean, g_free);
 
   return result;
 }
