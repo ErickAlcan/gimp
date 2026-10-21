@@ -723,8 +723,26 @@ export_image (GFile                *file,
                (gint) (data_length + sizeof (JPEG_APP_HEADER_PS)));
 #endif
 
-              jpeg_write_marker (&cinfo, JPEG_APP0 + 13, full_data,
-                                 data_length + sizeof (JPEG_APP_HEADER_PS));
+              /* A marker holds at most 65533 bytes: split bigger
+               * resources (e.g. a CMYK image's resources) into several
+               * APP13 markers, each with the header; jpeg-load
+               * concatenates them.
+               */
+              {
+                const gsize  max_payload = 65533 - sizeof (JPEG_APP_HEADER_PS);
+                gsize        offset      = 0;
+
+                while (offset < data_length)
+                  {
+                    gsize chunk = MIN (max_payload, data_length - offset);
+
+                    memcpy (full_data + sizeof (JPEG_APP_HEADER_PS),
+                            data_buffer + offset, chunk);
+                    jpeg_write_marker (&cinfo, JPEG_APP0 + 13, full_data,
+                                       chunk + sizeof (JPEG_APP_HEADER_PS));
+                    offset += chunk;
+                  }
+              }
               g_free (full_data);
             }
         }
