@@ -19,15 +19,15 @@
  */
 
 /* The CMYK <-> blend space converter used by GimpOperationLayerMode when
- * it composites in CMYK (devel-docs/cmyk-mode/INTERFACES.md §8.5).
+ * it composites in CMYK.
  *
  * Blend modes blend in an RGB/Lab space: the backdrop and the layer are
  * converted from "CMYKA float" (image space) to the op's blend format
- * (sRGB based, NULL babl space, I5), blended with 4 components, and the
+ * (sRGB based, NULL babl space), blended with 4 components, and the
  * result is converted back.  The color conversion runs through two
  * GimpColorTransforms per CMYK space, "CMYKA u16" <-> "R'G'B'A u16" sRGB,
  * relative colorimetric with black point compensation.  With lcms (the
- * GimpColorTransform CMYK path of WS01b) these are precomputed 16 bit
+ * lcms GimpColorTransform CMYK path) these are precomputed 16 bit
  * device links, an order of magnitude faster than babl's reference fish.
  * If the transforms cannot be created, babl fishes are used directly.
  */
@@ -64,8 +64,6 @@ struct _GimpLayerModeCmykConverter
   GimpColorTransform *to_rgb;
   GimpColorTransform *from_rgb;
 
-  const Babl         *float_to_u16;
-  const Babl         *u16_to_float;
 
   const Babl         *blend_formats[N_BLEND_FORMATS];
 
@@ -117,8 +115,6 @@ converter_new (const Babl *space)
   conv->cmyka_u16   = babl_format_with_space ("CMYKA u16",   space);
   conv->rgba_u16    = babl_format ("R'G'B'A u16");
 
-  conv->float_to_u16 = babl_fish (conv->cmyka_float, conv->cmyka_u16);
-  conv->u16_to_float = babl_fish (conv->cmyka_u16,   conv->cmyka_float);
 
   for (i = 0; i < N_BLEND_FORMATS; i++)
     {
@@ -179,6 +175,41 @@ converter_new (const Babl *space)
   g_object_unref (srgb_profile);
 
   return conv;
+}
+
+/* CMYKA float <-> CMYKA u16 with babl's rounding.  babl has no fast path
+ * for CMYK formats with a space; its reference fish is serialized by a
+ * global mutex, which made the converter not scale with threads.
+ */
+static inline void
+cmyka_float_to_u16 (const gfloat *src,
+                    guint16      *dest,
+                    gint          n)
+{
+  n *= 5;
+
+  while (n--)
+    {
+      gdouble d = *src++;
+
+      if (d < 0.0)
+        *dest++ = 0;
+      else if (d > 1.0)
+        *dest++ = 65535;
+      else
+        *dest++ = d * 65535.0 + 0.5;
+    }
+}
+
+static inline void
+cmyka_u16_to_float (const guint16 *src,
+                    gfloat        *dest,
+                    gint           n)
+{
+  n *= 5;
+
+  while (n--)
+    *dest++ = (gfloat) ((gdouble) *src++ / 65535.0);
 }
 
 static inline void
@@ -283,7 +314,7 @@ gimp_layer_mode_cmyk_converter_to_blend (const GimpLayerModeCmykConverter *conv,
       guint16 rgb16[CHUNK * 4];
       gint    k = MIN (n, CHUNK);
 
-      babl_process (conv->float_to_u16, cmyka, cmyk16, k);
+      cmyka_float_to_u16 (cmyka, cmyk16, k);
 
       gimp_color_transform_process_pixels (conv->to_rgb,
                                            conv->cmyka_u16, cmyk16,
@@ -340,7 +371,7 @@ gimp_layer_mode_cmyk_converter_from_blend (const GimpLayerModeCmykConverter *con
                                            conv->cmyka_u16, cmyk16,
                                            k);
 
-      babl_process (conv->u16_to_float, cmyk16, cmyka, k);
+      cmyka_u16_to_float (cmyk16, cmyka, k);
 
       copy_alpha (blend, 4, cmyka, 5, k);
 

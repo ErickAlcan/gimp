@@ -152,7 +152,7 @@ gimp_mybrush_core_start (GimpPaintCore     *paint_core,
   GimpContext     *context = GIMP_CONTEXT (paint_options);
   GList           *list;
 
-  /* libmypaint paints RGB: not available on CMYK drawables (M13) */
+  /* libmypaint paints RGB: not available on CMYK drawables */
   for (list = drawables; list; list = g_list_next (list))
     {
       if (gimp_drawable_is_cmyk (list->data))

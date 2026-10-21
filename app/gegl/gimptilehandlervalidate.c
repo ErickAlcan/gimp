@@ -17,6 +17,8 @@
 
 #include "config.h"
 
+#include <string.h>
+
 #include <cairo.h>
 #include <gio/gio.h>
 #include <gegl.h>
@@ -27,6 +29,7 @@
 
 #include "core/gimpchunkiterator.h"
 
+#include "gimp-babl.h"
 #include "gimp-gegl-loops.h"
 #include "gimp-gegl-utils.h"
 #include "gimptilehandlervalidate.h"
@@ -223,6 +226,180 @@ gimp_tile_handler_validate_real_end_validate (GimpTileHandlerValidate *validate)
   validate->suspend_validate--;
 }
 
+/*  CMYK targets.
+ *
+ *  babl never builds fast paths for formats with a CMYK space, every CMYK
+ *  conversion is a reference fish serialized by babl's global reference
+ *  mutex, so rendering a CMYK projection with several threads was slower
+ *  than with one.  Render CMYK(A) u8/u16 targets through "CMYKA float"
+ *  (the layer-mode ops' output format, i.e. no conversion in GEGL) and
+ *  quantize here, with babl's own rounding, verified once against babl.
+ */
+static gboolean cmyk_checked[2] = { FALSE, FALSE };
+static gboolean cmyk_ok[2]      = { FALSE, FALSE };
+static GMutex   cmyk_mutex;
+
+static inline guint16
+float_to_u16 (gfloat f)
+{
+  gdouble d = f;
+
+  if (d < 0.0)
+    return 0;
+  else if (d > 1.0)
+    return 65535;
+
+  return d * 65535.0 + 0.5;
+}
+
+static inline guint8
+float_to_u8 (gfloat f)
+{
+  gdouble d = f;
+
+  if (d < 0.0)
+    return 0;
+  else if (d > 1.0)
+    return 255;
+
+  return d * 255.0 + 0.5;
+}
+
+/* src: n CMYKA float pixels; dest: n pixels of 4 or 5 components */
+static void
+cmyk_from_float (const gfloat *src,
+                 gpointer      dest,
+                 gint          n_components,
+                 gboolean      u16,
+                 glong         n)
+{
+  gint c;
+
+  if (u16)
+    {
+      guint16 *d = dest;
+
+      while (n--)
+        {
+          for (c = 0; c < n_components; c++)
+            d[c] = float_to_u16 (src[c]);
+
+          src += 5;
+          d   += n_components;
+        }
+    }
+  else
+    {
+      guint8 *d = dest;
+
+      while (n--)
+        {
+          for (c = 0; c < n_components; c++)
+            d[c] = float_to_u8 (src[c]);
+
+          src += 5;
+          d   += n_components;
+        }
+    }
+}
+
+static gboolean
+cmyk_verify (const Babl *float_format,
+             const Babl *format,
+             gboolean    u16)
+{
+  const gint  n   = 70000;
+  gfloat     *src = g_new (gfloat, n * 5);
+  guint8     *a   = g_malloc (n * 10);
+  guint8     *b   = g_malloc (n * 10);
+  GRand      *rand = g_rand_new_with_seed (42);
+  gint        i;
+  gboolean    ok;
+
+  for (i = 0; i < n * 5; i++)
+    {
+      if (i / 5 < 65536)
+        /* exact levels and their neighbourhood */
+        src[i] = (i / 5) / 65535.0f + (i % 5 - 2) * 1e-6f;
+      else
+        src[i] = g_rand_double_range (rand, -0.1, 1.1);
+    }
+
+  /* exact u8 levels and half steps */
+  for (i = 0; i < 512 * 5; i++)
+    src[i] = (i / 5) / 510.0f;
+
+  cmyk_from_float (src, a, 5, u16, n);
+  babl_process (babl_fish (float_format, format), src, b, n);
+
+  ok = ! memcmp (a, b, n * (u16 ? 10 : 5));
+
+  g_rand_free (rand);
+  g_free (src);
+  g_free (a);
+  g_free (b);
+
+  return ok;
+}
+
+/* returns the "CMYKA float" format to render @format through, or NULL */
+static const Babl *
+cmyk_render_format (const Babl *format,
+                    gint       *n_components,
+                    gboolean   *u16)
+{
+  const Babl *model;
+  const Babl *float_format;
+  gint        bpc;
+  gint        index;
+  gboolean    ok;
+
+  if (! gimp_babl_format_is_cmyk (format))
+    return NULL;
+
+  model = babl_format_get_model (format);
+
+  if (model != babl_model_with_space ("CMYK",  format) &&
+      model != babl_model_with_space ("CMYKA", format))
+    return NULL;
+
+  *n_components = babl_format_get_n_components (format);
+  bpc           = babl_format_get_bytes_per_pixel (format) / *n_components;
+
+  if (bpc == 1)
+    index = 0;
+  else if (bpc == 2)
+    index = 1;
+  else
+    return NULL;
+
+  *u16         = (index == 1);
+  float_format = babl_format_with_space ("CMYKA float", format);
+
+  g_mutex_lock (&cmyk_mutex);
+
+  if (! cmyk_checked[index])
+    {
+      cmyk_ok[index]      = cmyk_verify (float_format,
+                                         babl_format_with_space (index ?
+                                                                 "CMYKA u16" :
+                                                                 "CMYKA u8",
+                                                                 format),
+                                         index == 1);
+      cmyk_checked[index] = TRUE;
+
+      if (! cmyk_ok[index])
+        g_printerr ("%s: CMYK %s quantization differs from babl, disabled\n",
+                    G_STRFUNC, index ? "u16" : "u8");
+    }
+
+  ok = cmyk_ok[index];
+
+  g_mutex_unlock (&cmyk_mutex);
+
+  return ok ? float_format : NULL;
+}
+
 static void
 gimp_tile_handler_validate_real_validate (GimpTileHandlerValidate *validate,
                                           const GeglRectangle     *rect,
@@ -238,6 +415,31 @@ gimp_tile_handler_validate_real_validate (GimpTileHandlerValidate *validate,
               rect.height);
 #endif
 
+  const Babl *float_format;
+  gint        n_components;
+  gboolean    u16;
+
+  float_format = cmyk_render_format (format, &n_components, &u16);
+
+  if (float_format)
+    {
+      gint    stride = rect->width * 5;
+      gfloat *data   = g_new (gfloat, (gsize) stride * rect->height);
+      gint    y;
+
+      gegl_node_blit (validate->graph, 1.0, rect, float_format,
+                      data, stride * sizeof (gfloat),
+                      GEGL_BLIT_DEFAULT);
+
+      for (y = 0; y < rect->height; y++)
+        cmyk_from_float (data + (gsize) y * stride,
+                         (guint8 *) dest_buf + (gsize) y * dest_stride,
+                         n_components, u16, rect->width);
+
+      g_free (data);
+      return;
+    }
+
   gegl_node_blit (validate->graph, 1.0, rect, format,
                   dest_buf, dest_stride,
                   GEGL_BLIT_DEFAULT);
@@ -252,7 +454,8 @@ gimp_tile_handler_validate_real_validate_buffer (GimpTileHandlerValidate *valida
 
   klass = GIMP_TILE_HANDLER_VALIDATE_GET_CLASS (validate);
 
-  if (klass->validate == gimp_tile_handler_validate_real_validate)
+  if (klass->validate == gimp_tile_handler_validate_real_validate &&
+      ! gimp_babl_format_is_cmyk (gegl_buffer_get_format (buffer)))
     {
       gegl_node_blit_buffer (validate->graph, buffer, rect, 0,
                              GEGL_ABYSS_NONE);

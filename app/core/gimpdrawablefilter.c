@@ -2101,7 +2101,7 @@ gimp_drawable_filter_sync_affect (GimpDrawableFilter *filter)
     filter->applicator,
     filter->override_constraints ?
 
-      /* all components, including K in CMYK images (INTERFACES §1) */
+      /* all components, including K in CMYK images */
       GIMP_COMPONENT_MASK_ALL :
 
       gimp_drawable_get_active_mask (filter->drawable));

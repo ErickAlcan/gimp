@@ -1174,7 +1174,7 @@ gimp_gegl_convert_color_profile (GeglBuffer               *src_buffer,
     {
       /* no transform to an input-only CMYK profile: don't fall back to a
        * babl conversion either, babl crashes on RGB -> CMYK with such a
-       * profile (INTERFACES §3.2)
+       * profile
        */
       g_printerr ("%s: cannot convert to an input-only CMYK profile\n",
                   G_STRFUNC);
@@ -1220,7 +1220,7 @@ gimp_gegl_average_color (GeglBuffer          *buffer,
   if (gimp_babl_format_is_cmyk (gegl_buffer_get_format (buffer)))
     {
       /* CMYK buffers are averaged natively (premultiplied inks in the
-       * buffer's space), not through RGB (PLAN §5)
+       * buffer's space), not through RGB
        */
       const Babl *space = gegl_buffer_get_format (buffer);
 

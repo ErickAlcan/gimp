@@ -1904,9 +1904,9 @@ struct DoLayerBlend : Base
   {
     const Babl *paint_format = gimp_temp_buf_get_format (params->paint_buf);
 
-    /* B2: for CMYK paint buffers, this is a shared instance per
+    /* for CMYK paint buffers, this is a shared instance per
      * (mode, format) whose pads have the paint buffer's format, so that
-     * it composites with 5 components (INTERFACES §8.2).  For other
+     * it composites with 5 components.  For other
      * formats, it is gimp_layer_mode_get_operation()'s instance.
      */
     layer_mode = GIMP_OPERATION_LAYER_MODE (

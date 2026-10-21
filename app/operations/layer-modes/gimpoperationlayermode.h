@@ -56,7 +56,7 @@ struct _GimpOperationLayerMode
   gboolean                     is_last_node;
   gboolean                     has_mask;
 
-  /*  CMYK compositing (devel-docs/cmyk-mode/INTERFACES.md §8.3)  */
+  /*  CMYK compositing  */
   gboolean                     prop_cmyk_native;
   const Babl                  *fixed_format;
   gboolean                     cmyk;
@@ -64,6 +64,9 @@ struct _GimpOperationLayerMode
   const GimpLayerModeCmykConverter *cmyk_converter;
   gboolean                     cached_cmyk;
   gboolean                     legacy_cmyk_warned;
+  const Babl                  *aux_native_format;
+  const Babl                  *cmyk_format;
+  gboolean                     cmyk_format_valid;
 };
 
 struct _GimpOperationLayerModeClass

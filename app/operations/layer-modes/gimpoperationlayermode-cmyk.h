@@ -22,7 +22,7 @@
 
 
 /*  CMYK <-> blend space converter of the layer-mode op
- *  (devel-docs/cmyk-mode/INTERFACES.md §8.5)
+ * 
  */
 
 typedef struct _GimpLayerModeCmykConverter GimpLayerModeCmykConverter;

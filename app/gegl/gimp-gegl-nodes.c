@@ -43,7 +43,7 @@
  * If @format is a CMYK format, the background is a "CMYKA float" color in
  * @format's space and the composite is CMYK native (an image-space CMYK
  * @background converts exactly); @composite_space is ignored.  Otherwise
- * @composite_space must be an RGB space (INTERFACES §8.2, B3).
+ * @composite_space must be an RGB space.
  *
  * Returns: (transfer full): the new node.
  **/
@@ -220,7 +220,7 @@ gimp_gegl_mode_node_set_mode (GeglNode               *node,
  * @composite_mode:  the composite mode (AUTO = the mode's default)
  * @cmyk_native:     whether the op composites natively when it meets CMYK
  *                   data, i.e. whether the caller's *stored* composite space
- *                   is AUTO (INTERFACES §8.2, B3)
+ *                   is AUTO
  *
  * Sets all properties of @node's layer-mode op, including "cmyk-native".
  **/

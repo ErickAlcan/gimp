@@ -682,7 +682,7 @@ gimp_fill_options_get_format (GimpFillOptions *options,
   context    = GIMP_CONTEXT (options);
   paint_mode = gimp_context_get_paint_mode (context);
 
-  /*  legacy modes are not available in CMYK images (I9)  */
+  /*  legacy modes are not available in CMYK images  */
   if (gimp_drawable_is_cmyk (drawable))
     paint_mode = gimp_layer_mode_get_non_legacy (paint_mode);
 
