@@ -91,8 +91,6 @@ static GimpColorProfile * peek_icc_profile         (PSDimage       *img_a,
                                                     GInputStream   *input,
                                                     GError        **error);
 static const Babl *     get_image_cmyk_space       (GimpImage      *image);
-static void             psd_ensure_layer_alpha     (GimpLayer      *layer,
-                                                    GimpImageType   image_type);
 
 static gint             add_color_map              (GimpImage      *image,
                                                     PSDimage       *img_a);
@@ -1843,18 +1841,6 @@ get_image_cmyk_space (GimpImage *image)
   return space;
 }
 
-/* Until gimp-layer-new honours GIMP_CMYKA_IMAGE (WS05, INTERFACES §12),
- * a CMYKA layer may come back without alpha: add it.  A no-op otherwise.
- */
-static void
-psd_ensure_layer_alpha (GimpLayer     *layer,
-                        GimpImageType  image_type)
-{
-  if (layer && image_type == GIMP_CMYKA_IMAGE &&
-      ! gimp_drawable_has_alpha (GIMP_DRAWABLE (layer)))
-    gimp_layer_add_alpha (layer);
-}
-
 static GimpImage *
 create_gimp_image (PSDimage      *img_a,
                    GFile         *file,
@@ -3282,7 +3268,6 @@ add_layers (GimpImage     *image,
               layer = gimp_layer_new (image, lyr_a[lidx]->name,
                                       l_w, l_h, image_type,
                                       100, GIMP_LAYER_MODE_NORMAL);
-              psd_ensure_layer_alpha (layer, image_type);
             }
         }
 
@@ -5695,7 +5680,6 @@ add_merged_image (GimpImage     *image,
                               image_type,
                               100,
                               gimp_image_get_default_new_layer_mode (image));
-      psd_ensure_layer_alpha (layer, image_type);
       gimp_image_insert_layer (image, layer, NULL, 0);
 
       buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));

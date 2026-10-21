@@ -1843,13 +1843,6 @@ load_image (GimpProcedure        *procedure,
                                   gimp_image_get_default_new_layer_mode (*image));
           g_free (layer_name);
 
-          /* Until gimp-layer-new honours GIMP_CMYKA_IMAGE (WS05,
-           * INTERFACES §12), a CMYKA layer may come back without alpha.
-           */
-          if (layer_type == GIMP_CMYKA_IMAGE &&
-              ! gimp_drawable_has_alpha (GIMP_DRAWABLE (layer)))
-            gimp_layer_add_alpha (layer);
-
           if (! base_format && image_type == GIMP_INDEXED)
             {
               /* can't create the palette format here, need to get it from
