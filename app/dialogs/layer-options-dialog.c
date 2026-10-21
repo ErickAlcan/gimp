@@ -208,9 +208,17 @@ layer_options_dialog_new (GimpImage                *image,
     mode_context = GIMP_LAYER_MODE_CONTEXT_GROUP;
 
   private->mode_box = gimp_layer_mode_box_new (mode_context);
+
+  /*  layers of CMYK images can't have legacy modes  */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    gimp_layer_mode_box_set_allow_legacy (GIMP_LAYER_MODE_BOX (private->mode_box),
+                                          FALSE);
+
   item_options_dialog_add_widget (dialog, _("_Mode:"), private->mode_box);
   gimp_layer_mode_box_set_mode (GIMP_LAYER_MODE_BOX (private->mode_box),
                                 private->mode);
+  /*  the box maps legacy modes for CMYK images  */
+  private->mode = gimp_layer_mode_box_get_mode (GIMP_LAYER_MODE_BOX (private->mode_box));
 
   g_signal_connect (private->mode_box, "notify::layer-mode",
                     G_CALLBACK (layer_options_dialog_mode_notify),

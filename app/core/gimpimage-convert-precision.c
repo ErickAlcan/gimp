@@ -67,6 +67,9 @@ gimp_image_convert_precision (GimpImage        *image,
 
   g_return_if_fail (GIMP_IS_IMAGE (image));
   g_return_if_fail (precision != gimp_image_get_precision (image));
+  /*  I2: CMYK images only use non-linear precisions; gimp_babl_is_valid()
+   *  checks that
+   */
   g_return_if_fail (gimp_babl_is_valid (gimp_image_get_base_type (image),
                                         precision));
   g_return_if_fail (progress == NULL || GIMP_IS_PROGRESS (progress));

@@ -1300,6 +1300,11 @@ export_image (GFile         *file,
       header[17] = origin ? 8 : 0x28; /* alpha + orientation */
       break;
 
+    /* CMYK images are converted to RGB by the export options (no
+     * GIMP_EXPORT_CAN_HANDLE_CMYK); should one get here anyway, babl
+     * converts the inks to sRGB.
+     */
+    case GIMP_CMYK_IMAGE:
     case GIMP_RGB_IMAGE:
       format  = babl_format ("R'G'B' u8");
       out_bpp = 3;
@@ -1307,6 +1312,7 @@ export_image (GFile         *file,
       header[17] = origin ? 0 : 0x20; /* alpha + orientation */
       break;
 
+    case GIMP_CMYKA_IMAGE:
     case GIMP_RGBA_IMAGE:
       format  = babl_format ("R'G'B'A u8");
       out_bpp = 4;

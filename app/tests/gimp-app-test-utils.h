@@ -39,4 +39,33 @@ GimpImage     * gimp_test_utils_create_image_from_dialog
                                                      (Gimp        *gimp);
 
 
+/*  CMYK helpers (devel-docs/cmyk-mode/TESTING.md)  */
+
+GimpPrecision      gimp_test_utils_cmyk_precision          (void);
+
+GimpImage        * gimp_test_utils_create_cmyk_image       (Gimp                *gimp,
+                                                            gint                 width,
+                                                            gint                 height,
+                                                            GimpPrecision        precision,
+                                                            GimpColorProfile    *profile);
+GimpLayer        * gimp_test_utils_add_cmyk_layer          (GimpImage           *image,
+                                                            const gchar         *name,
+                                                            gboolean             with_alpha,
+                                                            const gdouble        cmyka[5]);
+
+void               gimp_test_utils_write_cmyk_patch        (GeglBuffer          *buffer,
+                                                            const GeglRectangle *rect,
+                                                            const gdouble        cmyka[5]);
+void               gimp_test_utils_read_cmyk_pixel         (GeglBuffer          *buffer,
+                                                            gint                 x,
+                                                            gint                 y,
+                                                            gdouble              cmyka[5]);
+gpointer           gimp_test_utils_read_patch              (GeglBuffer          *buffer,
+                                                            const GeglRectangle *rect,
+                                                            const Babl          *format);
+
+GimpColorProfile * gimp_test_utils_cmyk_input_only_profile (void);
+GimpColorProfile * gimp_test_utils_cmyk_header_variant     (GimpColorProfile    *profile);
+
+
 #endif /* __GIMP_APP_TEST_UTILS_H__ */

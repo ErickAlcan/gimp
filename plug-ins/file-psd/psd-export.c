@@ -119,6 +119,9 @@ typedef struct PsdImageData
 
   gint               nLayers;     /* Number of layers in the image */
   GList             *lLayers;     /* List of PSD_Layer */
+
+  gboolean           cmyk;        /* Writing a CMYK file (native CMYK image
+                                     or RGB image exported as CMYK) */
 } PSD_Image_Data;
 
 typedef struct PsdResourceOptions
@@ -277,6 +280,8 @@ static GimpLayer   * create_merged_image        (GimpImage      *image,
                                                  GError        **error);
 
 static gint          get_bpc                    (GimpImage      *image);
+static GimpColorProfile *
+                     get_cmyk_export_profile    (GimpImage      *image);
 static const Babl  * get_pixel_format           (GimpDrawable   *drawable,
                                                  gboolean        cmyk,
                                                  GError        **error);
@@ -582,6 +587,8 @@ gimpBaseTypeToPsdMode (GimpImageBaseType gimpBaseType)
       return 1;                                         /* Grayscale */
     case GIMP_INDEXED:
       return 2;                                         /* Indexed */
+    case GIMP_CMYK:
+      return PSD_CMYK;                                  /* CMYK */
     default:
       g_message (_("Error: Can't convert GIMP base imagetype to PSD mode"));
       IFDBG(1) g_debug ("PSD Export: gimpBaseType value is %d, "
@@ -610,6 +617,8 @@ nChansLayer (gint gimpBaseType,
       return 1 + incAlpha + incMask;     /* G & Alpha & Mask (if any) */
     case GIMP_INDEXED:
       return 1 + incAlpha + incMask;     /* I & Alpha & Mask (if any) */
+    case GIMP_CMYK:
+      return 4 + incAlpha + incMask;     /* C,M,Y,K & Alpha & Mask (if any) */
     default:
       return 0;                          /* Return 0 channels by default */
     }
@@ -656,9 +665,10 @@ save_header (GOutputStream       *output,
 
   if (options->cmyk)
     {
-      nChannels =
-        gimp_drawable_has_alpha (GIMP_DRAWABLE (PSDImageData.merged_layer)) ?
-        5 : 4;
+      /* Same count as save_data() writes */
+      nChannels = (PSDImageData.nChannels +
+                   (gimp_drawable_has_alpha (GIMP_DRAWABLE (PSDImageData.merged_layer)) ?
+                    5 : 4));
     }
   else
     {
@@ -1113,12 +1123,17 @@ save_resources (GOutputStream       *output,
   {
     GimpColorProfile *profile = NULL;
 
-    if (options->cmyk)
+    if (options->tif && gimp_image_get_base_type (image) == GIMP_CMYK)
       {
-        profile = gimp_image_get_simulation_profile (image);
-
-        if (profile && ! gimp_color_profile_is_cmyk (profile))
-          g_clear_object (&profile);
+        /* Metadata for TIFF/JPEG: the host format embeds the profile
+         * of a CMYK image itself; a copy here only bloats the resource
+         * block (the builtin CMYK profile is ~80 KB).
+         */
+        profile = NULL;
+      }
+    else if (options->cmyk)
+      {
+        profile = get_cmyk_export_profile (image);
       }
     else if (! options->duotone)
       {
@@ -1643,14 +1658,14 @@ save_layer_and_mask (GOutputStream       *output,
                                     gimp_drawable_has_alpha (GIMP_DRAWABLE (psd_layer->layer)),
                                     hasMask);
 
-      /* Manually set channels to 4 or 5 when export as CMYK;
-       * Can be removed once CMYK channels are accessible in GIMP
+      /* CMYK export of an RGB image: 4 color channels (+ alpha,
+       * + mask: write_pixel_data() writes the mask as last channel).
        */
       if (options->cmyk)
         {
-          nChannelsLayer =
-            gimp_drawable_has_alpha (GIMP_DRAWABLE (psd_layer->layer)) ?
-            5 : 4;
+          nChannelsLayer = nChansLayer (GIMP_CMYK,
+                                        gimp_drawable_has_alpha (GIMP_DRAWABLE (psd_layer->layer)),
+                                        hasMask);
         }
 
       WRITE_RETURN (gint16, output, nChannelsLayer, "Number channels in the layer", ;);
@@ -1979,13 +1994,18 @@ write_pixel_data (GOutputStream       *output,
 
   if (options->cmyk && ! gimp_item_is_channel (GIMP_ITEM (drawable)))
     {
-      profile = gimp_image_get_simulation_profile (image);
-      if (profile && gimp_color_profile_is_cmyk (profile))
+      /* Native CMYK image: the image space (babl only inverts the
+       * inks).  RGB image: late binding conversion to the
+       * soft-proofing profile.
+       */
+      profile = get_cmyk_export_profile (image);
+      if (profile)
         space = gimp_color_profile_get_space (profile,
+                                              gimp_image_get_base_type (image) == GIMP_CMYK ?
+                                              GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC :
                                               gimp_image_get_simulation_intent (image),
                                               NULL);
-      if (profile)
-        g_object_unref (profile);
+      g_clear_object (&profile);
 
       if (get_bpc (image) == 1)
         type = babl_type ("u8");
@@ -2332,6 +2352,57 @@ create_merged_image (GimpImage           *image,
       GeglBufferIterator *iter;
 
       buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (projection));
+
+      if (options->cmyk)
+        {
+          /* Float data (get_pixel_format() gives R'G'B'A float for an
+           * RGB image exported as CMYK, the u8 loop below can't handle
+           * it). Inverted CMYK: "white" is 1.0 like in RGB.
+           */
+          if (gimp_image_get_base_type (image) == GIMP_CMYK)
+            format = babl_format_with_space ("cmykA float",
+                                             gimp_drawable_get_format (GIMP_DRAWABLE (projection)));
+          else
+            format = babl_format_with_space ("R'G'B'A float",
+                                             gimp_drawable_get_format (GIMP_DRAWABLE (projection)));
+
+          iter = gegl_buffer_iterator_new (buffer, NULL, 0, format,
+                                           GEGL_ACCESS_READWRITE,
+                                           GEGL_ABYSS_NONE, 1);
+
+          while (gegl_buffer_iterator_next (iter))
+            {
+              gfloat *d          = iter->items[0].data;
+              gint    n_channels = babl_format_get_n_components (format);
+              gint    i;
+
+              for (i = 0; i < iter->length; i++)
+                {
+                  gfloat alpha = d[n_channels - 1];
+
+                  if (alpha < 1.0f)
+                    {
+                      gint c;
+
+                      transparency_found = TRUE;
+
+                      /* blend against white, photoshop does this. */
+                      for (c = 0; c < n_channels - 1; c++)
+                        d[c] = d[c] * alpha + 1.0f - alpha;
+                    }
+
+                  d += n_channels;
+                }
+            }
+
+          g_object_unref (buffer);
+
+          if (! transparency_found)
+            gimp_layer_flatten (projection);
+
+          return projection;
+        }
+
       format = get_pixel_format (GIMP_DRAWABLE (projection), options->cmyk,
                                  error);
       bpp    = babl_format_get_bytes_per_pixel (format);
@@ -2394,6 +2465,17 @@ get_image_data (GimpImage           *image,
 
   PSDImageData.baseType = gimp_image_get_base_type (image);
   IFDBG(1) g_debug ("\tGot base type: %d", PSDImageData.baseType);
+
+  /* CMYK images are always written as CMYK PSD files, with the image
+   * profile and the native inks.
+   */
+  if (PSDImageData.baseType == GIMP_CMYK)
+    {
+      options->cmyk    = TRUE;
+      options->duotone = FALSE;
+    }
+
+  PSDImageData.cmyk = options->cmyk;
 
   PSDImageData.merged_layer = create_merged_image (image, options, error);
 
@@ -2755,9 +2837,37 @@ clean:
   return (*error == NULL);
 }
 
+/* The CMYK profile a CMYK PSD is written with (new reference or NULL):
+ * the image profile for CMYK images, the soft-proofing profile when an
+ * RGB image is exported as CMYK.
+ */
+static GimpColorProfile *
+get_cmyk_export_profile (GimpImage *image)
+{
+  GimpColorProfile *profile;
+
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    profile = gimp_image_get_color_profile (image);
+  else
+    profile = gimp_image_get_simulation_profile (image);
+
+  if (profile && ! gimp_color_profile_is_cmyk (profile))
+    g_clear_object (&profile);
+
+  return profile;
+}
+
 static gint
 get_bpc (GimpImage *image)
 {
+  /* CMYK PSD files are written with 8 or 16 bits per channel only
+   * (see write_pixel_data()); keep header, masks and channels in sync.
+   */
+  if (PSDImageData.cmyk && gimp_image_get_precision (image) != GIMP_PRECISION_U8_NON_LINEAR &&
+      gimp_image_get_precision (image) != GIMP_PRECISION_U8_LINEAR &&
+      gimp_image_get_precision (image) != GIMP_PRECISION_U8_PERCEPTUAL)
+    return 2;
+
   switch (gimp_image_get_precision (image))
     {
     case GIMP_PRECISION_U8_LINEAR:
@@ -2889,6 +2999,23 @@ get_pixel_format (GimpDrawable  *drawable,
     case GIMP_INDEXED_IMAGE:
     case GIMP_INDEXEDA_IMAGE:
       return gimp_drawable_get_format (drawable);
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      {
+        /* Inverted inks (PSD convention) in the image space */
+        gboolean    alpha = gimp_drawable_type (drawable) == GIMP_CMYKA_IMAGE;
+        const Babl *cmyk_space;
+
+        cmyk_space = gimp_drawable_get_format (drawable);
+
+        if (get_bpc (image) == 1)
+          return babl_format_with_space (alpha ? "cmykA u8" : "cmyk u8",
+                                         cmyk_space);
+        else
+          return babl_format_with_space (alpha ? "cmykA u16" : "cmyk u16",
+                                         cmyk_space);
+      }
 
     default:
       g_return_val_if_reached (NULL);
@@ -3221,7 +3348,22 @@ save_dialog (GimpImage     *image,
                                            TRUE, config, "clippingpath", FALSE);
     }
 
-  if (has_duotone_data)
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      /* CMYK images are always exported natively: the "Export as CMYK"
+       * (soft-proofing conversion) option does not apply.
+       */
+      label = gimp_procedure_dialog_get_label (GIMP_PROCEDURE_DIALOG (dialog),
+                                               "cmyk-notice",
+                                               _("CMYK image: exported as CMYK "
+                                                 "with the image color profile."),
+                                               FALSE, FALSE);
+      gtk_label_set_xalign (GTK_LABEL (label), 0.0);
+      gimp_procedure_dialog_fill (GIMP_PROCEDURE_DIALOG (dialog),
+                                  "cmyk-notice",
+                                  NULL);
+    }
+  else if (has_duotone_data)
     gimp_procedure_dialog_fill (GIMP_PROCEDURE_DIALOG (dialog),
                                 "cmyk-frame",
                                 "duotone-frame",

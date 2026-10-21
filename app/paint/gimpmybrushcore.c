@@ -150,6 +150,18 @@ gimp_mybrush_core_start (GimpPaintCore     *paint_core,
 {
   GimpMybrushCore *core    = GIMP_MYBRUSH_CORE (paint_core);
   GimpContext     *context = GIMP_CONTEXT (paint_options);
+  GList           *list;
+
+  /* libmypaint paints RGB: not available on CMYK drawables */
+  for (list = drawables; list; list = g_list_next (list))
+    {
+      if (gimp_drawable_is_cmyk (list->data))
+        {
+          g_set_error_literal (error, GIMP_ERROR, GIMP_FAILED,
+                               _("MyPaint Brush does not support CMYK layers"));
+          return FALSE;
+        }
+    }
 
   core->private->mybrush = gimp_context_get_mybrush (context);
 

@@ -84,7 +84,8 @@ _gimp_drawable_get_format (GimpDrawable *drawable)
  *
  * This procedure returns the drawable's thumbnail Babl format.
  * Thumbnails are always 8-bit images, see gimp_drawable_thumbnail()
- * and gimp_drawable_sub_thmbnail().
+ * and gimp_drawable_sub_thmbnail(). Thumbnails of CMYK drawables are
+ * sRGB (R'G'B' u8 or R'G'B'A u8).
  *
  * Returns: (transfer full): The drawable's thumbnail Babl format.
  *          The returned value must be freed with g_free().
@@ -409,6 +410,43 @@ gimp_drawable_is_indexed (GimpDrawable *drawable)
   gimp_value_array_unref (return_vals);
 
   return is_indexed;
+}
+
+/**
+ * gimp_drawable_is_cmyk:
+ * @drawable: The drawable.
+ *
+ * Returns whether the drawable is a CMYK type.
+ *
+ * This procedure returns TRUE if the specified drawable is of type {
+ * CMYK, CMYKA }.
+ *
+ * Returns: TRUE if the drawable is a CMYK type.
+ *
+ * Since: 3.4
+ **/
+gboolean
+gimp_drawable_is_cmyk (GimpDrawable *drawable)
+{
+  GimpValueArray *args;
+  GimpValueArray *return_vals;
+  gboolean is_cmyk = FALSE;
+
+  args = gimp_value_array_new_from_types (NULL,
+                                          GIMP_TYPE_DRAWABLE, drawable,
+                                          G_TYPE_NONE);
+
+  return_vals = _gimp_pdb_run_procedure_array (gimp_get_pdb (),
+                                               "gimp-drawable-is-cmyk",
+                                               args);
+  gimp_value_array_unref (args);
+
+  if (GIMP_VALUES_GET_ENUM (return_vals, 0) == GIMP_PDB_SUCCESS)
+    is_cmyk = GIMP_VALUES_GET_BOOLEAN (return_vals, 1);
+
+  gimp_value_array_unref (return_vals);
+
+  return is_cmyk;
 }
 
 /**
@@ -1090,7 +1128,8 @@ gimp_drawable_offset (GimpDrawable   *drawable,
  * This function gets data from which a thumbnail of a drawable preview
  * can be created. Maximum x or y dimension is 1024 pixels. The pixels
  * are returned in RGB[A] or GRAY[A] format. The bpp return value gives
- * the number of bytes in the image.
+ * the number of bytes in the image. Thumbnails of CMYK drawables are
+ * sRGB: RGB[A] pixels, bpp 3 or 4.
  *
  * Returns: TRUE on success.
  **/
@@ -1157,7 +1196,8 @@ _gimp_drawable_thumbnail (GimpDrawable  *drawable,
  * This function gets data from which a thumbnail of a drawable preview
  * can be created. Maximum x or y dimension is 1024 pixels. The pixels
  * are returned in RGB[A] or GRAY[A] format. The bpp return value gives
- * the number of bytes in the image.
+ * the number of bytes in the image. Thumbnails of CMYK drawables are
+ * sRGB: RGB[A] pixels, bpp 3 or 4.
  *
  * Returns: TRUE on success.
  *

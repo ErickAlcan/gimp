@@ -242,10 +242,22 @@ gimp_layer_new_convert_buffer (GimpLayer         *layer,
   dest_profile =
     gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (layer));
 
-  gimp_gegl_convert_color_profile (src_buffer,  NULL, src_profile,
-                                   dest_buffer, NULL, dest_profile,
-                                   GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
-                                   TRUE, NULL);
+  /*  same-profile copies are exact: with equal
+   *  profiles both buffers share one babl space, a plain copy only
+   *  re-encodes
+   */
+  if (gimp_color_profile_is_equal (src_profile, dest_profile))
+    {
+      gimp_gegl_buffer_copy (src_buffer,  NULL, GEGL_ABYSS_NONE,
+                             dest_buffer, NULL);
+    }
+  else
+    {
+      gimp_gegl_convert_color_profile (src_buffer,  NULL, src_profile,
+                                       dest_buffer, NULL, dest_profile,
+                                       GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                       TRUE, NULL);
+    }
 
   g_object_unref (src_profile);
 }

@@ -70,8 +70,6 @@ static void   gimp_image_convert_profile_colormap (GimpImage                *ima
                                                    gboolean                  bpc,
                                                    GimpProgress             *progress);
 
-static void   gimp_image_fix_layer_format_spaces  (GimpImage                *image,
-                                                   GimpProgress             *progress);
 
 static void   gimp_image_create_color_transforms  (GimpImage                *image);
 
@@ -170,6 +168,10 @@ _gimp_image_set_hidden_profile (GimpImage        *image,
   g_return_if_fail (profile == NULL || GIMP_IS_COLOR_PROFILE (profile));
 
   private = GIMP_IMAGE_GET_PRIVATE (image);
+
+  /*  "Use sRGB" doesn't apply to CMYK images  */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    return;
 
   if (profile != private->hidden_profile)
     {
@@ -336,11 +338,24 @@ gimp_image_set_icc_profile (GimpImage     *image,
                             const gchar   *profile_type,
                             GError       **error)
 {
-  GimpParasite *parasite = NULL;
+  GimpParasite     *parasite        = NULL;
+  GimpColorProfile *default_profile = NULL;
 
   g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
   g_return_val_if_fail (data == NULL || length != 0, FALSE);
   g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
+
+  /*  I1: a CMYK image always has a CMYK profile, unsetting it means
+   *  setting the default CMYK profile
+   */
+  if (! data &&
+      g_strcmp0 (profile_type, GIMP_ICC_PROFILE_PARASITE_NAME) == 0 &&
+      gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      default_profile = gimp_get_default_cmyk_profile (image->gimp, NULL, NULL);
+
+      data = gimp_color_profile_get_icc_profile (default_profile, &length);
+    }
 
   if (data)
     {
@@ -355,11 +370,14 @@ gimp_image_set_icc_profile (GimpImage     *image,
                                               &is_builtin, error))
         {
           gimp_parasite_free (parasite);
+          g_clear_object (&default_profile);
           return FALSE;
         }
 
-      /*  don't tag the image with the built-in profile  */
-      if (is_builtin)
+      /*  don't tag the image with the built-in profile, except CMYK
+       *  images, which always carry their profile (I1)
+       */
+      if (is_builtin && gimp_image_get_base_type (image) != GIMP_CMYK)
         {
           gimp_parasite_free (parasite);
           parasite = NULL;
@@ -370,6 +388,8 @@ gimp_image_set_icc_profile (GimpImage     *image,
 
   if (parasite)
     gimp_parasite_free (parasite);
+
+  g_clear_object (&default_profile);
 
   return TRUE;
 }
@@ -541,7 +561,26 @@ gimp_image_validate_color_profile_by_format (const Babl         *format,
   g_return_val_if_fail (GIMP_IS_COLOR_PROFILE (profile), FALSE);
   g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
-  if (gimp_babl_format_get_base_type (format) == GIMP_GRAY)
+  if (gimp_babl_format_get_base_type (format) == GIMP_CMYK)
+    {
+      if (! gimp_color_profile_is_cmyk (profile))
+        {
+          g_set_error_literal (error, GIMP_ERROR, GIMP_FAILED,
+                               _("ICC profile validation failed: "
+                                 "Color profile is not for CMYK color space"));
+          return FALSE;
+        }
+
+      if (! gimp_color_profile_is_cmyk_bidirectional (profile))
+        {
+          g_set_error_literal (error, GIMP_ERROR, GIMP_FAILED,
+                               _("ICC profile validation failed: "
+                                 "CMYK color profile cannot be used for "
+                                 "conversion to CMYK (missing output tables)"));
+          return FALSE;
+        }
+    }
+  else if (gimp_babl_format_get_base_type (format) == GIMP_GRAY)
     {
       if (! gimp_color_profile_is_gray (profile))
         {
@@ -594,6 +633,8 @@ gimp_image_assign_color_profile (GimpImage         *image,
                                  GError           **error)
 {
   GimpColorProfile *src_profile;
+  GimpColorProfile *default_profile = NULL;
+  gboolean          success         = TRUE;
 
   g_return_val_if_fail (GIMP_IS_IMAGE (image), FALSE);
   g_return_val_if_fail (dest_profile == NULL ||
@@ -601,16 +642,28 @@ gimp_image_assign_color_profile (GimpImage         *image,
   g_return_val_if_fail (progress == NULL || GIMP_IS_PROGRESS (progress), FALSE);
   g_return_val_if_fail (error == NULL || *error == NULL, FALSE);
 
+  /*  I1: a CMYK image always has a CMYK profile, discarding the
+   *  profile means assigning the default CMYK profile
+   */
+  if (! dest_profile && gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      default_profile = gimp_get_default_cmyk_profile (image->gimp, NULL, NULL);
+      dest_profile    = default_profile;
+    }
+
   if (dest_profile &&
       ! gimp_image_validate_color_profile (image, dest_profile, NULL, error))
-    return FALSE;
+    {
+      success = FALSE;
+      goto out;
+    }
 
   src_profile = gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (image));
 
   if (src_profile == dest_profile ||
       (src_profile && dest_profile &&
        gimp_color_profile_is_equal (src_profile, dest_profile)))
-    return TRUE;
+    goto out;
 
   if (progress)
     gimp_progress_start (progress, FALSE,
@@ -632,11 +685,17 @@ gimp_image_assign_color_profile (GimpImage         *image,
   if (gimp_image_get_base_type (image) == GIMP_INDEXED)
     gimp_image_colormap_update_formats (image);
 
-  gimp_image_fix_layer_format_spaces (image, progress);
+  /*  for CMYK images too, assigning is a relabeling: the ink values
+   *  are kept, only the layer formats' space changes
+   */
+  _gimp_image_fix_layer_format_spaces (image, progress);
 
   gimp_image_undo_group_end (image);
 
-  return TRUE;
+ out:
+  g_clear_object (&default_profile);
+
+  return success;
 }
 
 gboolean
@@ -684,6 +743,11 @@ gimp_image_convert_color_profile (GimpImage                *image,
     {
     case GIMP_RGB:
     case GIMP_GRAY:
+    case GIMP_CMYK:
+      /*  CMYK -> CMYK: gimp_gegl_convert_color_profile() uses lcms with
+       *  intent and BPC (gimp_color_transform_can_gegl_copy() is FALSE
+       *  for different CMYK profiles)
+       */
       gimp_image_convert_profile_layers (image,
                                          src_profile, dest_profile,
                                          intent, bpc,
@@ -695,7 +759,7 @@ gimp_image_convert_color_profile (GimpImage                *image,
                                            src_profile, dest_profile,
                                            intent, bpc,
                                            progress);
-      gimp_image_fix_layer_format_spaces (image, progress);
+      _gimp_image_fix_layer_format_spaces (image, progress);
       break;
     }
 
@@ -733,7 +797,9 @@ gimp_image_import_color_profile (GimpImage    *image,
       intent = GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC;
       bpc    = TRUE;
 
-      if (gimp_image_get_base_type (image) == GIMP_GRAY)
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        pref_profile = gimp_color_config_get_cmyk_color_profile (image->gimp->config->color_management, NULL);
+      else if (gimp_image_get_base_type (image) == GIMP_GRAY)
         pref_profile = gimp_color_config_get_gray_color_profile (image->gimp->config->color_management, NULL);
       else
         pref_profile = gimp_color_config_get_rgb_color_profile (image->gimp->config->color_management, NULL);
@@ -778,7 +844,9 @@ gimp_image_import_color_profile (GimpImage    *image,
             {
               if (policy == GIMP_COLOR_PROFILE_POLICY_CONVERT_PREFERRED)
                 {
-                  if (gimp_image_get_base_type (image) == GIMP_GRAY)
+                  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+                    dest_profile = gimp_get_default_cmyk_profile (image->gimp, NULL, NULL);
+                  else if (gimp_image_get_base_type (image) == GIMP_GRAY)
                     dest_profile = gimp_color_config_get_gray_color_profile (image->gimp->config->color_management, NULL);
                   else
                     dest_profile = gimp_color_config_get_rgb_color_profile (image->gimp->config->color_management, NULL);
@@ -792,6 +860,21 @@ gimp_image_import_color_profile (GimpImage    *image,
                 }
             }
 
+          /*  a CMYK image is only ever converted to a usable CMYK
+           *  profile, never to RGB (e.g. a profile picked in the
+           *  policy dialog)
+           */
+          if (gimp_image_get_base_type (image) == GIMP_CMYK &&
+              ! gimp_color_profile_is_cmyk_bidirectional (dest_profile))
+            {
+              GimpColorProfile *cmyk_profile;
+
+              cmyk_profile = gimp_get_default_cmyk_profile (image->gimp,
+                                                            NULL, NULL);
+              g_object_unref (dest_profile);
+              dest_profile = cmyk_profile;
+            }
+
           gimp_image_convert_color_profile (image, dest_profile,
                                             intent, bpc,
                                             progress, NULL);
@@ -801,6 +884,74 @@ gimp_image_import_color_profile (GimpImage    *image,
 
       g_clear_object (&pref_profile);
     }
+}
+
+/**
+ * gimp_get_default_cmyk_profile:
+ * @gimp:      a #Gimp
+ * @preferred: (nullable): a profile to use if it is suitable
+ * @error:     (nullable): return location for the reason why a candidate
+ *             was skipped
+ *
+ * Returns the profile to use for a new CMYK image or a conversion to
+ * CMYK: @preferred if it is a bidirectional CMYK profile, else the
+ * "cmyk-profile" color management preference if it can be loaded and is
+ * a bidirectional CMYK profile, else the builtin CMYK profile.
+ *
+ * If a candidate is skipped, @error is set (for the first skipped
+ * candidate only); the function still succeeds.
+ *
+ * Returns: (transfer full): a new reference to a CMYK profile, never
+ *          %NULL.
+ **/
+GimpColorProfile *
+gimp_get_default_cmyk_profile (Gimp              *gimp,
+                               GimpColorProfile  *preferred,
+                               GError           **error)
+{
+  GimpColorProfile *profile;
+  GError           *my_error = NULL;
+
+  g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
+  g_return_val_if_fail (preferred == NULL ||
+                        GIMP_IS_COLOR_PROFILE (preferred), NULL);
+  g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+  if (preferred)
+    {
+      if (gimp_color_profile_is_cmyk_bidirectional (preferred))
+        return g_object_ref (preferred);
+
+      g_set_error (error, GIMP_ERROR, GIMP_FAILED,
+                   _("Color profile '%s' cannot be used for CMYK images"),
+                   gimp_color_profile_get_label (preferred));
+    }
+
+  profile = gimp_color_config_get_cmyk_color_profile (gimp->config->color_management,
+                                                      &my_error);
+
+  if (profile)
+    {
+      if (gimp_color_profile_is_cmyk_bidirectional (profile))
+        return profile;
+
+      if (error && ! *error)
+        g_set_error (error, GIMP_ERROR, GIMP_FAILED,
+                     _("Color profile '%s' cannot be used for CMYK images"),
+                     gimp_color_profile_get_label (profile));
+
+      g_object_unref (profile);
+    }
+  else if (my_error)
+    {
+      if (error && ! *error)
+        g_propagate_error (error, my_error);
+      else
+        g_clear_error (&my_error);
+    }
+
+  return g_object_ref (gimp_babl_get_builtin_color_profile (GIMP_CMYK,
+                                                            GIMP_TRC_NON_LINEAR));
 }
 
 GimpColorTransform *
@@ -1014,9 +1165,9 @@ gimp_image_convert_profile_colormap (GimpImage                *image,
   gimp_palette_restrict_format (palette, format, TRUE);
 }
 
-static void
-gimp_image_fix_layer_format_spaces (GimpImage    *image,
-                                    GimpProgress *progress)
+void
+_gimp_image_fix_layer_format_spaces (GimpImage    *image,
+                                     GimpProgress *progress)
 {
   GimpObjectQueue *queue;
   GList           *layers;
@@ -1051,16 +1202,35 @@ gimp_image_create_color_transforms (GimpImage *image)
   if (private->color_profile &&
       ! private->color_transforms_created)
     {
+      GimpColorProfile        *profile;
       GimpColorProfile        *srgb_profile;
       GimpColorTransformFlags  flags = 0;
+      gboolean                 cmyk;
+
+      cmyk = (gimp_image_get_base_type (image) == GIMP_CMYK);
+
+      /*  the stored profile may not match the base type in the transient
+       *  states inside an undo/redo of a conversion (INTERFACES section
+       *  4): use the builtin profile of the base type then, like
+       *  gimp_image_get_layer_space() does
+       */
+      if (cmyk != gimp_color_profile_is_cmyk (private->color_profile))
+        profile = gimp_image_get_builtin_color_profile (image);
+      else
+        profile = private->color_profile;
+
+      g_object_ref (profile);
 
       srgb_profile = gimp_color_profile_new_rgb_srgb ();
 
       flags |= GIMP_COLOR_TRANSFORM_FLAGS_NOOPTIMIZE;
       flags |= GIMP_COLOR_TRANSFORM_FLAGS_BLACK_POINT_COMPENSATION;
 
+      /*  for CMYK images, these are lcms transforms (see
+       *  gimp_color_transform_new())
+       */
       private->transform_to_srgb_u8 =
-        gimp_color_transform_new (private->color_profile,
+        gimp_color_transform_new (profile,
                                   gimp_image_get_layer_format (image, TRUE),
                                   srgb_profile,
                                   babl_format ("R'G'B'A u8"),
@@ -1068,22 +1238,25 @@ gimp_image_create_color_transforms (GimpImage *image)
                                   flags);
 
       private->transform_to_srgb_double =
-        gimp_color_transform_new (private->color_profile,
+        gimp_color_transform_new (profile,
                                   gimp_image_get_layer_format (image, TRUE),
                                   srgb_profile,
                                   babl_format ("R'G'B'A double"),
                                   GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
                                   flags);
 
-      private->transform_from_srgb_double =
-        gimp_color_transform_new (srgb_profile,
-                                  babl_format ("R'G'B'A double"),
-                                  private->color_profile,
-                                  gimp_image_get_layer_format (image, TRUE),
-                                  GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
-                                  flags);
+      /*  an input-only CMYK profile can't be a conversion target  */
+      if (! cmyk || gimp_color_profile_is_cmyk_bidirectional (profile))
+        private->transform_from_srgb_double =
+          gimp_color_transform_new (srgb_profile,
+                                    babl_format ("R'G'B'A double"),
+                                    profile,
+                                    gimp_image_get_layer_format (image, TRUE),
+                                    GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                    flags);
 
       g_object_unref (srgb_profile);
+      g_object_unref (profile);
 
       private->color_transforms_created = TRUE;
     }

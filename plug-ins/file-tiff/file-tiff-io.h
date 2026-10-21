@@ -47,5 +47,7 @@ TIFF     * tiff_open                  (GFile        *file,
 gboolean   tiff_got_file_size_error   (void);
 void       tiff_reset_file_size_error (void);
 
+const Babl * tiff_cmyk_associated_format (const Babl *type);
+
 
 #endif /* __FILE_TIFF_IO_H__ */

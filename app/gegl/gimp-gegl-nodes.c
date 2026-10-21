@@ -24,27 +24,62 @@
 
 #include "gimp-gegl-types.h"
 
+#include "gimp-babl.h"
+
 #include "operations/layer-modes/gimp-layer-modes.h"
 
 #include "gimp-gegl-nodes.h"
 #include "gimp-gegl-utils.h"
 
 
+/**
+ * gimp_gegl_create_flatten_node:
+ * @background:      the background color
+ * @format:          (nullable): the format of the flattened result
+ * @composite_space: the composite space, for non-CMYK @format
+ *
+ * Creates a node that composites its input over @background.
+ *
+ * If @format is a CMYK format, the background is a "CMYKA float" color in
+ * @format's space and the composite is CMYK native (an image-space CMYK
+ * @background converts exactly); @composite_space is ignored.  Otherwise
+ * @composite_space must be an RGB space.
+ *
+ * Returns: (transfer full): the new node.
+ **/
 GeglNode *
 gimp_gegl_create_flatten_node (GeglColor           *background,
+                               const Babl          *format,
                                GimpLayerColorSpace  composite_space)
 {
-  GeglNode  *node;
-  GeglNode  *input;
-  GeglNode  *output;
-  GeglNode  *color;
-  GeglNode  *mode;
+  GeglNode   *node;
+  GeglNode   *input;
+  GeglNode   *output;
+  GeglNode   *color;
+  GeglNode   *mode;
+  gboolean    cmyk = gimp_babl_format_is_cmyk (format);
+  const Babl *color_format;
 
   g_return_val_if_fail (GEGL_IS_COLOR (background), NULL);
-  g_return_val_if_fail (composite_space == GIMP_LAYER_COLOR_SPACE_RGB_LINEAR ||
+  g_return_val_if_fail (cmyk ||
+                        composite_space == GIMP_LAYER_COLOR_SPACE_RGB_LINEAR ||
                         composite_space == GIMP_LAYER_COLOR_SPACE_RGB_NON_LINEAR ||
                         composite_space == GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL,
                         NULL);
+
+  if (cmyk)
+    {
+      composite_space = GIMP_LAYER_COLOR_SPACE_AUTO;
+      color_format    = babl_format_with_space ("CMYKA float", format);
+    }
+  else
+    {
+      color_format = gimp_layer_mode_get_format (GIMP_LAYER_MODE_NORMAL,
+                                                 GIMP_LAYER_COLOR_SPACE_AUTO,
+                                                 composite_space,
+                                                 GIMP_LAYER_COMPOSITE_AUTO,
+                                                 NULL);
+    }
 
   node = gegl_node_new ();
 
@@ -54,12 +89,7 @@ gimp_gegl_create_flatten_node (GeglColor           *background,
   color = gegl_node_new_child (node,
                                "operation", "gegl:color",
                                "value",     background,
-                               "format",    gimp_layer_mode_get_format (
-                                              GIMP_LAYER_MODE_NORMAL,
-                                              GIMP_LAYER_COLOR_SPACE_AUTO,
-                                              composite_space,
-                                              GIMP_LAYER_COMPOSITE_AUTO,
-                                              NULL),
+                               "format",    color_format,
                                NULL);
 
   gimp_gegl_node_set_underlying_operation (node, color);
@@ -67,11 +97,12 @@ gimp_gegl_create_flatten_node (GeglColor           *background,
   mode = gegl_node_new_child (node,
                               "operation", "gimp:normal",
                               NULL);
-  gimp_gegl_mode_node_set_mode (mode,
-                                GIMP_LAYER_MODE_NORMAL,
-                                GIMP_LAYER_COLOR_SPACE_AUTO,
-                                composite_space,
-                                GIMP_LAYER_COMPOSITE_AUTO);
+  gimp_gegl_mode_node_set_mode_full (mode,
+                                     GIMP_LAYER_MODE_NORMAL,
+                                     GIMP_LAYER_COLOR_SPACE_AUTO,
+                                     composite_space,
+                                     GIMP_LAYER_COMPOSITE_AUTO,
+                                     cmyk);
 
   gegl_node_connect (input,  "output",
                      mode,   "aux");
@@ -173,6 +204,34 @@ gimp_gegl_mode_node_set_mode (GeglNode               *node,
                               GimpLayerColorSpace     composite_space,
                               GimpLayerCompositeMode  composite_mode)
 {
+  gimp_gegl_mode_node_set_mode_full (node, mode,
+                                     blend_space, composite_space,
+                                     composite_mode,
+                                     composite_space ==
+                                     GIMP_LAYER_COLOR_SPACE_AUTO);
+}
+
+/**
+ * gimp_gegl_mode_node_set_mode_full:
+ * @node:            a layer-mode node
+ * @mode:            the layer mode
+ * @blend_space:     the blend space (AUTO = the mode's default)
+ * @composite_space: the composite space (AUTO = the mode's default)
+ * @composite_mode:  the composite mode (AUTO = the mode's default)
+ * @cmyk_native:     whether the op composites natively when it meets CMYK
+ *                   data, i.e. whether the caller's *stored* composite space
+ *                   is AUTO
+ *
+ * Sets all properties of @node's layer-mode op, including "cmyk-native".
+ **/
+void
+gimp_gegl_mode_node_set_mode_full (GeglNode               *node,
+                                   GimpLayerMode           mode,
+                                   GimpLayerColorSpace     blend_space,
+                                   GimpLayerColorSpace     composite_space,
+                                   GimpLayerCompositeMode  composite_mode,
+                                   gboolean                cmyk_native)
+{
   gdouble opacity;
 
   g_return_if_fail (GEGL_IS_NODE (node));
@@ -200,6 +259,7 @@ gimp_gegl_mode_node_set_mode (GeglNode               *node,
                  "blend-space",     blend_space,
                  "composite-space", composite_space,
                  "composite-mode",  composite_mode,
+                 "cmyk-native",     cmyk_native ? TRUE : FALSE,
                  NULL);
 }
 

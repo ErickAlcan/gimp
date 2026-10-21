@@ -871,6 +871,10 @@ gimp_brush_core_get_paint_buffer (GimpPaintCore    *paint_core,
       const Babl             *format;
       GimpLayerCompositeMode  composite_mode;
 
+      /*  legacy modes are not available in CMYK images  */
+      if (gimp_drawable_is_cmyk (drawable))
+        paint_mode = gimp_layer_mode_get_non_legacy (paint_mode);
+
       composite_mode = gimp_layer_mode_get_paint_composite_mode (paint_mode);
 
       format = gimp_layer_mode_get_format (paint_mode,

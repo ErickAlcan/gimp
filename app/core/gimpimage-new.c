@@ -118,6 +118,8 @@ gimp_image_new_from_template (Gimp         *gimp,
   GimpColorProfile        *profile;
   GimpColorRenderingIntent intent;
   gboolean                 bpc;
+  GimpImageBaseType        base_type;
+  GimpPrecision            precision;
   gint                     width, height;
   gboolean                 has_alpha;
   const gchar             *comment;
@@ -126,11 +128,32 @@ gimp_image_new_from_template (Gimp         *gimp,
   g_return_val_if_fail (GIMP_IS_TEMPLATE (template), NULL);
   g_return_val_if_fail (GIMP_IS_CONTEXT (context), NULL);
 
+  base_type = gimp_template_get_base_type (template);
+  precision = gimp_template_get_precision (template);
+
+  if (base_type == GIMP_CMYK)
+    {
+      if (! gimp_babl_has_cmyk_support ())
+        {
+          /*  callers gate CMYK; be total anyway  */
+          gimp_message_literal (gimp, NULL, GIMP_MESSAGE_WARNING,
+                                _("CMYK images are not supported: babl was "
+                                  "built without LCMS support. Creating an "
+                                  "RGB image instead."));
+          base_type = GIMP_RGB;
+        }
+      else
+        {
+          /*  I2: CMYK images only use non-linear precisions  */
+          precision = gimp_babl_precision (gimp_babl_component_type (precision),
+                                           GIMP_TRC_NON_LINEAR);
+        }
+    }
+
   image = gimp_create_image (gimp,
                              gimp_template_get_width (template),
                              gimp_template_get_height (template),
-                             gimp_template_get_base_type (template),
-                             gimp_template_get_precision (template),
+                             base_type, precision,
                              FALSE);
   gimp_context_set_image (context, image);
 
@@ -156,7 +179,29 @@ gimp_image_new_from_template (Gimp         *gimp,
   gimp_image_set_unit (image, gimp_template_get_resolution_unit (template));
 
   profile = gimp_template_get_color_profile (template);
-  gimp_image_set_color_profile (image, profile, NULL);
+  if (base_type == GIMP_CMYK)
+    {
+      GError *error = NULL;
+
+      /*  the image already has the default CMYK profile (I1); use the
+       *  template's profile only if it is CMYK and bidirectional
+       */
+      if (profile &&
+          ! gimp_image_set_color_profile (image, profile, &error))
+        {
+          gimp_message (gimp, NULL, GIMP_MESSAGE_WARNING,
+                        _("The template's color profile '%s' cannot be "
+                          "used for a CMYK image, using the default CMYK "
+                          "profile instead: %s"),
+                        gimp_color_profile_get_label (profile),
+                        error->message);
+          g_clear_error (&error);
+        }
+    }
+  else
+    {
+      gimp_image_set_color_profile (image, profile, NULL);
+    }
   if (profile)
     g_object_unref (profile);
 

@@ -1130,6 +1130,45 @@ static const GimpLayerMode layer_mode_groups[][2] =
 
 static GeglOperation *ops[G_N_ELEMENTS (layer_mode_infos)] = { 0 };
 
+/*  per (mode, CMYK format) paint instances, see
+ *  gimp_layer_mode_get_operation_for_format()
+ */
+typedef struct
+{
+  GimpLayerMode  mode;
+  const Babl    *format;
+} FormatOpKey;
+
+static GHashTable *format_ops = NULL;
+static GMutex      format_ops_mutex;
+
+
+static guint
+format_op_key_hash (gconstpointer key)
+{
+  const FormatOpKey *k = key;
+
+  return g_direct_hash (k->format) ^ (guint) k->mode;
+}
+
+static gboolean
+format_op_key_equal (gconstpointer a,
+                     gconstpointer b)
+{
+  const FormatOpKey *ka = a;
+  const FormatOpKey *kb = b;
+
+  return ka->mode == kb->mode && ka->format == kb->format;
+}
+
+static void
+format_op_free (gpointer data)
+{
+  GeglOperation *operation = data;
+
+  g_object_unref (operation->node);
+}
+
 /*  public functions  */
 
 void
@@ -1159,6 +1198,12 @@ gimp_layer_modes_exit (void)
           ops[i] = NULL;
         }
     }
+
+  g_mutex_lock (&format_ops_mutex);
+  g_clear_pointer (&format_ops, g_hash_table_unref);
+  g_mutex_unlock (&format_ops_mutex);
+
+  gimp_layer_mode_cmyk_converters_exit ();
 }
 
 static const GimpLayerModeInfo *
@@ -1179,6 +1224,67 @@ gimp_layer_mode_is_legacy (GimpLayerMode mode)
     return FALSE;
 
   return (info->flags & GIMP_LAYER_MODE_FLAG_LEGACY) != 0;
+}
+
+/**
+ * gimp_layer_mode_is_cmyk_native:
+ * @mode: a #GimpLayerMode
+ *
+ * Returns: %TRUE if @mode composites natively in CMYK images, i.e. if it
+ *          is not a legacy mode.
+ **/
+gboolean
+gimp_layer_mode_is_cmyk_native (GimpLayerMode mode)
+{
+  return ! gimp_layer_mode_is_legacy (mode);
+}
+
+/**
+ * gimp_layer_mode_get_non_legacy:
+ * @mode: a #GimpLayerMode
+ *
+ * Maps a legacy mode to its non-legacy equivalent (FOO_LEGACY -> FOO).
+ * The "Old broken Overlay" mode (%GIMP_LAYER_MODE_OVERLAY_LEGACY) uses
+ * the legacy soft light formula, so it maps to %GIMP_LAYER_MODE_SOFTLIGHT.
+ * Non-legacy modes are returned unchanged.
+ *
+ * Returns: the non-legacy mode.
+ **/
+GimpLayerMode
+gimp_layer_mode_get_non_legacy (GimpLayerMode mode)
+{
+  switch (mode)
+    {
+    case GIMP_LAYER_MODE_NORMAL_LEGACY:         return GIMP_LAYER_MODE_NORMAL;
+    case GIMP_LAYER_MODE_BEHIND_LEGACY:         return GIMP_LAYER_MODE_BEHIND;
+    case GIMP_LAYER_MODE_MULTIPLY_LEGACY:       return GIMP_LAYER_MODE_MULTIPLY;
+    case GIMP_LAYER_MODE_SCREEN_LEGACY:         return GIMP_LAYER_MODE_SCREEN;
+    case GIMP_LAYER_MODE_OVERLAY_LEGACY:        return GIMP_LAYER_MODE_SOFTLIGHT;
+    case GIMP_LAYER_MODE_DIFFERENCE_LEGACY:     return GIMP_LAYER_MODE_DIFFERENCE;
+    case GIMP_LAYER_MODE_ADDITION_LEGACY:       return GIMP_LAYER_MODE_ADDITION;
+    case GIMP_LAYER_MODE_SUBTRACT_LEGACY:       return GIMP_LAYER_MODE_SUBTRACT;
+    case GIMP_LAYER_MODE_DARKEN_ONLY_LEGACY:    return GIMP_LAYER_MODE_DARKEN_ONLY;
+    case GIMP_LAYER_MODE_LIGHTEN_ONLY_LEGACY:   return GIMP_LAYER_MODE_LIGHTEN_ONLY;
+    case GIMP_LAYER_MODE_HSV_HUE_LEGACY:        return GIMP_LAYER_MODE_HSV_HUE;
+    case GIMP_LAYER_MODE_HSV_SATURATION_LEGACY: return GIMP_LAYER_MODE_HSV_SATURATION;
+    case GIMP_LAYER_MODE_HSL_COLOR_LEGACY:      return GIMP_LAYER_MODE_HSL_COLOR;
+    case GIMP_LAYER_MODE_HSV_VALUE_LEGACY:      return GIMP_LAYER_MODE_HSV_VALUE;
+    case GIMP_LAYER_MODE_DIVIDE_LEGACY:         return GIMP_LAYER_MODE_DIVIDE;
+    case GIMP_LAYER_MODE_DODGE_LEGACY:          return GIMP_LAYER_MODE_DODGE;
+    case GIMP_LAYER_MODE_BURN_LEGACY:           return GIMP_LAYER_MODE_BURN;
+    case GIMP_LAYER_MODE_HARDLIGHT_LEGACY:      return GIMP_LAYER_MODE_HARDLIGHT;
+    case GIMP_LAYER_MODE_SOFTLIGHT_LEGACY:      return GIMP_LAYER_MODE_SOFTLIGHT;
+    case GIMP_LAYER_MODE_GRAIN_EXTRACT_LEGACY:  return GIMP_LAYER_MODE_GRAIN_EXTRACT;
+    case GIMP_LAYER_MODE_GRAIN_MERGE_LEGACY:    return GIMP_LAYER_MODE_GRAIN_MERGE;
+    case GIMP_LAYER_MODE_COLOR_ERASE_LEGACY:    return GIMP_LAYER_MODE_COLOR_ERASE;
+
+    default:
+      break;
+    }
+
+  g_warn_if_fail (! gimp_layer_mode_is_legacy (mode));
+
+  return mode;
 }
 
 gboolean
@@ -1350,6 +1456,76 @@ gimp_layer_mode_get_operation (GimpLayerMode mode)
   return ops[mode];
 }
 
+/**
+ * gimp_layer_mode_get_operation_for_format:
+ * @mode:   a #GimpLayerMode
+ * @format: the format of the paint buffer
+ *
+ * Returns the shared operation the paint core composites with.  For
+ * non-CMYK formats this is gimp_layer_mode_get_operation() (same
+ * instance, pads untouched).  For CMYK formats it is a process-wide
+ * instance per (non-legacy @mode, @format), whose pad formats are set
+ * explicitly, so that it composites with 5 components.
+ *
+ * Returns: a #GeglOperation which may be reused and must not be freed.
+ **/
+GeglOperation *
+gimp_layer_mode_get_operation_for_format (GimpLayerMode  mode,
+                                          const Babl    *format)
+{
+  GeglOperation *operation;
+  FormatOpKey    key;
+
+  if (! gimp_babl_format_is_cmyk (format))
+    return gimp_layer_mode_get_operation (mode);
+
+  key.mode   = gimp_layer_mode_get_non_legacy (gimp_layer_mode_info (mode) -
+                                               layer_mode_infos);
+  key.format = format;
+
+  g_mutex_lock (&format_ops_mutex);
+
+  if (! format_ops)
+    format_ops = g_hash_table_new_full (format_op_key_hash,
+                                        format_op_key_equal,
+                                        g_free, format_op_free);
+
+  operation = g_hash_table_lookup (format_ops, &key);
+
+  if (! operation)
+    {
+      GeglNode *node;
+
+      node = gegl_node_new_child (NULL,
+                                  "operation",
+                                  gimp_layer_mode_get_operation_name (key.mode),
+                                  NULL);
+
+      operation = gegl_node_get_gegl_operation (node);
+
+      if (GIMP_IS_OPERATION_LAYER_MODE (operation))
+        {
+          GimpOperationLayerMode *layer_mode = GIMP_OPERATION_LAYER_MODE (operation);
+
+          layer_mode->layer_mode      = key.mode;
+          layer_mode->function        = GIMP_OPERATION_LAYER_MODE_GET_CLASS (operation)->process;
+          layer_mode->blend_function  = gimp_layer_mode_get_blend_function (key.mode);
+          layer_mode->blend_space     = gimp_layer_mode_get_blend_space (key.mode);
+          layer_mode->composite_space = gimp_layer_mode_get_composite_space (key.mode);
+          layer_mode->composite_mode  = gimp_layer_mode_get_paint_composite_mode (key.mode);
+
+          gimp_operation_layer_mode_set_fixed_format (layer_mode, format);
+        }
+
+      g_hash_table_insert (format_ops,
+                           g_memdup2 (&key, sizeof (key)), operation);
+    }
+
+  g_mutex_unlock (&format_ops_mutex);
+
+  return operation;
+}
+
 GimpLayerModeFunc
 gimp_layer_mode_get_function (GimpLayerMode mode)
 {
@@ -1502,6 +1678,17 @@ gimp_layer_mode_get_format (GimpLayerMode           mode,
                             const Babl             *preferred_format)
 {
   GimpLayerCompositeRegion composite_region;
+
+  /* CMYK images composite in CMYKA float in the image's CMYK space,
+   * unless the caller's (unresolved) composite space is explicitly an
+   * RGB space.  Legacy modes mean their non-legacy
+   * equivalent here.
+   */
+  if (composite_space == GIMP_LAYER_COLOR_SPACE_AUTO &&
+      gimp_babl_format_is_cmyk (preferred_format))
+    {
+      return babl_format_with_space ("CMYKA float", preferred_format);
+    }
 
   /* for now, all modes perform i/o in the composite space. */
   (void) mode;

@@ -44,6 +44,8 @@ GimpColorProfile * gimp_color_profile_new_d65_gray_srgb_trc (void);
 GimpColorProfile * gimp_color_profile_new_d65_gray_linear   (void);
 GimpColorProfile * gimp_color_profile_new_d50_gray_lab_trc  (void);
 
+GimpColorProfile * gimp_color_profile_new_cmyk_builtin      (void);
+
 GimpColorProfile *
        gimp_color_profile_new_srgb_trc_from_color_profile   (GimpColorProfile  *profile);
 GimpColorProfile *
@@ -80,6 +82,7 @@ gboolean           gimp_color_profile_is_equal              (GimpColorProfile  *
 gboolean           gimp_color_profile_is_rgb                (GimpColorProfile  *profile);
 gboolean           gimp_color_profile_is_gray               (GimpColorProfile  *profile);
 gboolean           gimp_color_profile_is_cmyk               (GimpColorProfile  *profile);
+gboolean           gimp_color_profile_is_cmyk_bidirectional (GimpColorProfile  *profile);
 
 gboolean           gimp_color_profile_is_linear             (GimpColorProfile  *profile);
 

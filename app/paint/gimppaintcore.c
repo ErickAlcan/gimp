@@ -1217,6 +1217,10 @@ gimp_paint_core_get_paint_buffer (GimpPaintCore    *core,
   g_return_val_if_fail (paint_buffer_x != NULL, NULL);
   g_return_val_if_fail (paint_buffer_y != NULL, NULL);
 
+  /*  legacy modes are not available in CMYK images  */
+  if (gimp_drawable_is_cmyk (drawable))
+    paint_mode = gimp_layer_mode_get_non_legacy (paint_mode);
+
   paint_buffer =
     GIMP_PAINT_CORE_GET_CLASS (core)->get_paint_buffer (core, drawable,
                                                         paint_options,
@@ -1285,6 +1289,10 @@ gimp_paint_core_paste (GimpPaintCore            *core,
 
   if (! affect)
     return;
+
+  /*  legacy modes are not available in CMYK images  */
+  if (gimp_drawable_is_cmyk (drawable))
+    paint_mode = gimp_layer_mode_get_non_legacy (paint_mode);
 
   if (core->applicators)
     {

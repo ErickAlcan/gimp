@@ -492,7 +492,7 @@ gimp_zoom_preview_draw (GimpPreview *preview)
 
       gimp_preview_area_draw (GIMP_PREVIEW_AREA (area),
                               0, 0, width, height,
-                              gimp_drawable_type (zoom_preview->drawable),
+                              _gimp_drawable_preview_get_image_type (zoom_preview->drawable),
                               data, width * bpp);
       g_free (data);
     }
@@ -517,7 +517,7 @@ gimp_zoom_preview_draw_buffer (GimpPreview  *preview,
       gimp_preview_area_draw (GIMP_PREVIEW_AREA (area),
                               0, 0,
                               width, height,
-                              gimp_drawable_type (zoom_preview->drawable),
+                              _gimp_drawable_preview_get_image_type (zoom_preview->drawable),
                               buffer,
                               rowstride);
     }
@@ -555,8 +555,8 @@ gimp_zoom_preview_draw_buffer (GimpPreview  *preview,
 
       gimp_preview_area_mask (GIMP_PREVIEW_AREA (area),
                               0, 0, width, height,
-                              gimp_drawable_type (zoom_preview->drawable),
-                              g_bytes_get_data (src, NULL), width * gimp_drawable_get_bpp (zoom_preview->drawable),
+                              _gimp_drawable_preview_get_image_type (zoom_preview->drawable),
+                              g_bytes_get_data (src, NULL), width * _gimp_drawable_preview_get_bpp (zoom_preview->drawable),
                               buffer, rowstride,
                               g_bytes_get_data (sel, NULL), width);
 

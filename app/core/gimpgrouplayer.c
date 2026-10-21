@@ -1159,6 +1159,11 @@ get_projection_format (GimpProjectable   *projectable,
     case GIMP_GRAY:
       return gimp_image_get_format (image, GIMP_GRAY, precision, TRUE,
                                     gimp_image_get_layer_space (image));
+
+    case GIMP_CMYK:
+      /* "CMYKA <precision>" in the image's CMYK space */
+      return gimp_image_get_format (image, GIMP_CMYK, precision, TRUE,
+                                    gimp_image_get_layer_space (image));
     }
 
   g_return_val_if_reached (NULL);
@@ -1186,7 +1191,13 @@ gimp_group_layer_convert_type (GimpLayer        *layer,
       gimp_image_undo_push_group_layer_convert (image, NULL, group);
     }
 
-  /*  Need to temporarily set the projectable's format to the new
+  /*  The group's pixels are not color-converted: its projection is
+   *  re-rendered from its children, which gimp_image_convert_type_full()
+   *  converts individually with the conversion intent
+   *  (_gimp_image_get_conversion_intent()), so the intent needs no
+   *  handling here, and RGB <-> CMYK works like any other base type change.
+   *
+   *  Need to temporarily set the projectable's format to the new
    *  values so the projection will create its tiles with the right
    *  depth
    */

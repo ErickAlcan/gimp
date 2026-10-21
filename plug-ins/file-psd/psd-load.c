@@ -83,7 +83,14 @@ static gint             read_merged_image_block    (PSDimage       *img_a,
                                                     GError        **error);
 
 static GimpImage *      create_gimp_image          (PSDimage       *img_a,
-                                                    GFile          *file);
+                                                    GFile          *file,
+                                                    GInputStream   *input,
+                                                    GError        **error);
+
+static GimpColorProfile * peek_icc_profile         (PSDimage       *img_a,
+                                                    GInputStream   *input,
+                                                    GError        **error);
+static const Babl *     get_image_cmyk_space       (GimpImage      *image);
 
 static gint             add_color_map              (GimpImage      *image,
                                                     PSDimage       *img_a);
@@ -239,6 +246,7 @@ load_image (GFile        *file,
   img_a.cmyk_transform_alpha     = NULL;
   img_a.cmyk_profile             = NULL;
   img_a.rgb_space                = NULL;
+  img_a.cmyk_space               = NULL;
   img_a.linked_files.linked_data = NULL;
   img_a.linked_files.last        = NULL;
   img_a.psd_file                 = file;
@@ -332,7 +340,7 @@ load_image (GFile        *file,
 
   /* ----- Create GIMP image ----- */
   IFDBG(2) g_debug ("Create GIMP image");
-  image = create_gimp_image (&img_a, file);
+  image = create_gimp_image (&img_a, file, input, &error);
   if (! image)
     goto load_error;
   gimp_progress_update (0.6);
@@ -350,6 +358,12 @@ load_image (GFile        *file,
                            &error) < 0)
     goto load_error;
   gimp_progress_update (0.8);
+
+  /* The profile of a native CMYK image is final now (it was set right
+   * after creating the image, before any pixel is written).
+   */
+  if (img_a.base_type == GIMP_CMYK)
+    img_a.cmyk_space = get_image_cmyk_space (image);
 
   /* ----- Add layers -----*/
   IFDBG(2) g_debug ("Add layers");
@@ -436,6 +450,7 @@ load_image_metadata (GFile        *file,
   img_a.quick_mask_id       = 0;
   img_a.cmyk_profile        = NULL;
   img_a.rgb_space           = NULL;
+  img_a.cmyk_space          = NULL;
   img_a.psd_file            = file;
   img_a.linked_files.linked_data
                             = NULL;
@@ -607,6 +622,13 @@ load_image_metadata (GFile        *file,
               break;
             case GIMP_INDEXED:
               img_a.color_mode = PSD_INDEXED;
+              break;
+            case GIMP_CMYK:
+              /* Native CMYK image (e.g. a CMYK TIFF with Photoshop
+               * layers): layer data is written as is.
+               */
+              img_a.color_mode = PSD_CMYK;
+              img_a.cmyk_space = get_image_cmyk_space (image);
               break;
             }
 
@@ -1741,9 +1763,89 @@ read_merged_image_block (PSDimage      *img_a,
   return 0;
 }
 
+/* Returns the ICC profile of the image resource block (resource 1039),
+ * if any, without touching any GimpImage.  The stream position is
+ * restored.
+ */
+static GimpColorProfile *
+peek_icc_profile (PSDimage      *img_a,
+                  GInputStream  *input,
+                  GError       **error)
+{
+  GimpColorProfile *profile = NULL;
+  goffset           pos     = PSD_TELL (input);
+  GError           *err     = NULL;
+
+  if (! psd_seek (input, img_a->image_res_start, G_SEEK_SET, &err))
+    {
+      g_clear_error (&err);
+      return NULL;
+    }
+
+  while (PSD_TELL (input) < img_a->image_res_start + img_a->image_res_len)
+    {
+      PSDimageres res_a;
+      gint        pad;
+
+      if (get_image_resource_header (&res_a, input, &err) < 0)
+        break;
+
+      if (res_a.data_start + res_a.data_len >
+          img_a->image_res_start + img_a->image_res_len)
+        break;
+
+      if (res_a.id == PSD_ICC_PROFILE && res_a.data_len > 0)
+        {
+          /* The length comes from the file: don't abort on a huge one */
+          guint8 *icc = g_try_malloc (res_a.data_len);
+
+          if (icc &&
+              psd_read (input, icc, res_a.data_len, &err) == res_a.data_len)
+            profile = gimp_color_profile_new_from_icc_profile (icc,
+                                                               res_a.data_len,
+                                                               NULL);
+          g_free (icc);
+          break;
+        }
+
+      pad = (res_a.data_len % 2 == 0) ? 0 : 1;
+
+      if (! psd_seek (input, res_a.data_start + res_a.data_len + pad,
+                      G_SEEK_SET, &err))
+        break;
+    }
+
+  g_clear_error (&err);
+
+  if (! psd_seek (input, pos, G_SEEK_SET, error))
+    g_clear_object (&profile);
+
+  return profile;
+}
+
+static const Babl *
+get_image_cmyk_space (GimpImage *image)
+{
+  GimpColorProfile *profile;
+  const Babl       *space = NULL;
+
+  profile = gimp_image_get_color_profile (image);
+
+  if (profile && gimp_color_profile_is_cmyk (profile))
+    space = gimp_color_profile_get_space (profile,
+                                          GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                          NULL);
+
+  g_clear_object (&profile);
+
+  return space;
+}
+
 static GimpImage *
-create_gimp_image (PSDimage *img_a,
-                   GFile    *file)
+create_gimp_image (PSDimage      *img_a,
+                   GFile         *file,
+                   GInputStream  *input,
+                   GError       **error)
 {
   GimpImage     *image = NULL;
   GimpPrecision  precision;
@@ -1772,6 +1874,74 @@ create_gimp_image (PSDimage *img_a,
       g_warning ("Invalid color mode");
       return NULL;
       break;
+    }
+
+  /* Native CMYK (INTERFACES §14): create a GIMP_CMYK image and set the
+   * embedded profile before any pixel is written.  An embedded CMYK
+   * profile which can't be used as conversion target (input-only) or
+   * a GIMP without CMYK support make us fall back to the RGB import.
+   */
+  if (img_a->color_mode == PSD_CMYK && img_a->bps <= 16)
+    {
+      GimpColorProfile *profile;
+      gboolean          native = TRUE;
+
+      profile = peek_icc_profile (img_a, input, error);
+      if (error && *error)
+        {
+          g_clear_object (&profile);
+          return NULL;
+        }
+
+      if (profile && ! gimp_color_profile_is_cmyk (profile))
+        {
+          /* Not a CMYK profile: ignore it, the default profile will do */
+          g_clear_object (&profile);
+        }
+      else if (profile && ! gimp_color_profile_is_cmyk_bidirectional (profile))
+        {
+          g_message (_("The embedded CMYK color profile of '%s' cannot be "
+                       "used as a color space (it has no output tables). "
+                       "The image is imported as RGB."),
+                     gimp_file_get_utf8_name (file));
+          native = FALSE;
+        }
+
+      if (native)
+        {
+          precision = (img_a->bps == 16) ? GIMP_PRECISION_U16_NON_LINEAR :
+                                           GIMP_PRECISION_U8_NON_LINEAR;
+
+          image = gimp_image_new_with_precision (img_a->columns, img_a->rows,
+                                                 GIMP_CMYK, precision);
+          if (image)
+            {
+              gimp_image_undo_disable (image);
+
+              if (profile)
+                {
+                  if (! gimp_image_set_color_profile (image, profile))
+                    g_printerr ("psd-load: failed to set CMYK profile: %s\n",
+                                gimp_pdb_get_last_error (gimp_get_pdb ()));
+                }
+              else
+                {
+                  g_message (_("'%s' has no embedded CMYK color profile. "
+                               "The default CMYK profile is used; the ink "
+                               "values are kept unchanged."),
+                             gimp_file_get_utf8_name (file));
+                }
+
+              img_a->base_type  = GIMP_CMYK;
+              img_a->cmyk_space = get_image_cmyk_space (image);
+            }
+          /* else: no CMYK support in this GIMP, RGB import below */
+        }
+
+      g_clear_object (&profile);
+
+      if (image)
+        return image;
     }
 
     switch (img_a->bps)
@@ -2619,6 +2789,7 @@ add_layers (GimpImage     *image,
   gboolean              alpha;
   gboolean              user_mask;
   gboolean              empty;
+  gboolean              missing_channels;
   gboolean              empty_mask;
   gboolean              no_draw_layer   = FALSE;
   GeglBuffer           *buffer;
@@ -2823,6 +2994,7 @@ add_layers (GimpImage     *image,
       user_mask = FALSE;
       user_mask_chn = -1;
       layer_channels = 0;
+      memset (channel_idx, 0, sizeof (channel_idx));
       l_x = 0;
       l_y = 0;
       l_w = img_a->columns;
@@ -2902,6 +3074,12 @@ add_layers (GimpImage     *image,
               IFDBG(4) g_debug ("Channel %d (id: %d) has no data", cidx, lyr_chn[cidx]->id);
             }
         }
+
+      /* A layer needs all color channels of the mode (a crafted file
+       * may have e.g. only C and M in a CMYK file): drawing it would
+       * read unset channel_idx[] entries.
+       */
+      missing_channels = (layer_channels < base_channels);
 
       if (alpha)
         {
@@ -3086,9 +3264,11 @@ add_layers (GimpImage     *image,
           no_draw_layer = (layer != NULL);
 
           if (! layer)
-            layer = gimp_layer_new (image, lyr_a[lidx]->name,
-                                    l_w, l_h, image_type,
-                                    100, GIMP_LAYER_MODE_NORMAL);
+            {
+              layer = gimp_layer_new (image, lyr_a[lidx]->name,
+                                      l_w, l_h, image_type,
+                                      100, GIMP_LAYER_MODE_NORMAL);
+            }
         }
 
       if (layer != NULL)
@@ -3109,6 +3289,18 @@ add_layers (GimpImage     *image,
             {
               /* Mode */
               psd_to_gimp_blend_mode (lyr_a[lidx], &mode_info);
+
+              /* An explicit RGB blend/composite space makes a layer of a
+               * CMYK image composite through RGB, which re-separates
+               * every ink (K100 becomes rich black in the projection).
+               * Leave CMYK layers on AUTO, i.e. CMYK-native compositing.
+               */
+              if (gimp_image_get_base_type (image) == GIMP_CMYK)
+                {
+                  mode_info.blend_space     = GIMP_LAYER_COLOR_SPACE_AUTO;
+                  mode_info.composite_space = GIMP_LAYER_COLOR_SPACE_AUTO;
+                }
+
               if (! strlen (lyr_a[lidx]->adjustment_layer->type))
                 gimp_layer_set_mode (layer, mode_info.mode);
               gimp_layer_set_blend_space (layer, mode_info.blend_space);
@@ -3183,7 +3375,18 @@ add_layers (GimpImage     *image,
             {
               IFDBG(3) g_debug ("Draw layer");
 
-              if (empty)
+              if (missing_channels && ! empty)
+                {
+                  g_message (_("Layer '%s' does not have all color channels "
+                               "of the image mode; it is left empty."),
+                             lyr_a[lidx]->name ? lyr_a[lidx]->name : "");
+
+                  for (cidx = 0; cidx < layer_channels; ++cidx)
+                    g_clear_pointer (&lyr_chn[channel_idx[cidx]]->data, g_free);
+
+                  gimp_drawable_fill (GIMP_DRAWABLE (layer), GIMP_FILL_TRANSPARENT);
+                }
+              else if (empty)
                 {
                   gimp_drawable_fill (GIMP_DRAWABLE (layer), GIMP_FILL_TRANSPARENT);
                 }
@@ -3208,7 +3411,9 @@ add_layers (GimpImage     *image,
                       gint                 src_step = bps;
                       gint                 dst_step = bps * base_channels;
 
-                      if (img_a->color_mode == PSD_CMYK || img_a->color_mode == PSD_LAB)
+                      if ((img_a->color_mode == PSD_CMYK &&
+                           img_a->base_type != GIMP_CMYK) ||
+                          img_a->color_mode == PSD_LAB)
                         {
                           dst0 = gegl_scratch_alloc (base_channels * bps *
                                                      iter->length);
@@ -3250,7 +3455,12 @@ add_layers (GimpImage     *image,
                             }
                         }
 
-                      if (img_a->color_mode == PSD_CMYK)
+                      if (img_a->color_mode == PSD_CMYK &&
+                          img_a->base_type == GIMP_CMYK)
+                        {
+                          /* Native CMYK: written as is (inverted format) */
+                        }
+                      else if (img_a->color_mode == PSD_CMYK)
                         {
                           psd_convert_cmyk_to_srgb (
                             img_a,
@@ -5474,7 +5684,12 @@ add_merged_image (GimpImage     *image,
 
       buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
 
-      if (img_a->color_mode == PSD_CMYK)
+      if (img_a->color_mode == PSD_CMYK &&
+          img_a->base_type == GIMP_CMYK)
+        {
+          /* Native CMYK: written as is (inverted format) */
+        }
+      else if (img_a->color_mode == PSD_CMYK)
         {
           guchar *dst0;
 
@@ -5509,11 +5724,39 @@ add_merged_image (GimpImage     *image,
                                             alpha_channel),
                        pixels, GEGL_AUTO_ROWSTRIDE);
 
-      if (img_a->color_mode == PSD_CMYK)
+      if (img_a->color_mode == PSD_CMYK &&
+          img_a->base_type != GIMP_CMYK)
         img_a->color_mode = PSD_RGB;
 
       /* Merged image data is blended against white.  Unblend it. */
-      if (img_a->transparency)
+      if (img_a->transparency && img_a->base_type == GIMP_CMYK)
+        {
+          GeglBufferIterator *iter;
+
+          /* White is "no ink": composite ink = ink * alpha */
+          iter = gegl_buffer_iterator_new (buffer, NULL, 0,
+                                           babl_format_with_space ("CMYKA float",
+                                                                   img_a->cmyk_space),
+                                           GEGL_ACCESS_READWRITE,
+                                           GEGL_ABYSS_NONE, 1);
+
+          while (gegl_buffer_iterator_next (iter))
+            {
+              gfloat *data = iter->items[0].data;
+
+              for (gint i = 0; i < iter->length; i++)
+                {
+                  if (data[4])
+                    {
+                      for (gint c = 0; c < 4; c++)
+                        data[c] = MIN (data[c] / data[4], 1.0f);
+                    }
+
+                  data += 5;
+                }
+            }
+        }
+      else if (img_a->transparency)
         {
           GeglBufferIterator *iter;
 
@@ -5690,8 +5933,12 @@ add_clipping_group (GimpImage  *image,
 
   clipping_group = GIMP_LAYER (gimp_group_layer_new (image, "Group added by GIMP"));
 
-  gimp_layer_set_blend_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
-  gimp_layer_set_composite_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+  /* CMYK images composite natively (AUTO), see add_layers()  */
+  if (gimp_image_get_base_type (image) != GIMP_CMYK)
+    {
+      gimp_layer_set_blend_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+      gimp_layer_set_composite_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+    }
   gimp_layer_set_composite_mode (clipping_group, GIMP_LAYER_COMPOSITE_UNION);
 
   gimp_image_insert_layer (image, clipping_group, parent, 0);
@@ -5784,6 +6031,10 @@ get_gimp_image_type (GimpImageBaseType image_base_type,
 
     case GIMP_RGB:
       image_type = (alpha) ? GIMP_RGBA_IMAGE : GIMP_RGB_IMAGE;
+      break;
+
+    case GIMP_CMYK:
+      image_type = (alpha) ? GIMP_CMYKA_IMAGE : GIMP_CMYK_IMAGE;
       break;
 
     default:
@@ -6190,6 +6441,29 @@ get_layer_format (PSDimage *img_a,
                                              "R'G'B'A float" :
                                              "R'G'B'A u8",
                                            img_a->rgb_space);
+          break;
+
+        default:
+          return NULL;
+          break;
+        }
+      break;
+
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      /* PSD stores inverted inks (0 = full ink), with non-inverted
+       * alpha. Tagged with the image space: babl only inverts.
+       */
+      switch (img_a->bps)
+        {
+        case 16:
+          format = babl_format_with_space (alpha ? "cmykA u16" : "cmyk u16",
+                                           img_a->cmyk_space);
+          break;
+
+        case 8:
+          format = babl_format_with_space (alpha ? "cmykA u8" : "cmyk u8",
+                                           img_a->cmyk_space);
           break;
 
         default:

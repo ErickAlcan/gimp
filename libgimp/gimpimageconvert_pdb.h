@@ -32,20 +32,24 @@ G_BEGIN_DECLS
 /* For information look into the C source or the html documentation */
 
 
-gboolean gimp_image_convert_rgb               (GimpImage              *image);
-gboolean gimp_image_convert_grayscale         (GimpImage              *image);
-gboolean gimp_image_convert_indexed           (GimpImage              *image,
-                                               GimpConvertDitherType   dither_type,
-                                               GimpConvertPaletteType  palette_type,
-                                               gint                    num_cols,
-                                               gboolean                alpha_dither,
-                                               gboolean                remove_unused,
-                                               const gchar            *palette);
-gboolean gimp_image_convert_set_dither_matrix (gint                    width,
-                                               gint                    height,
-                                               GBytes                 *matrix);
-gboolean gimp_image_convert_precision         (GimpImage              *image,
-                                               GimpPrecision           precision);
+gboolean                 gimp_image_convert_rgb               (GimpImage                *image);
+gboolean                 gimp_image_convert_grayscale         (GimpImage                *image);
+gboolean                 gimp_image_convert_indexed           (GimpImage                *image,
+                                                               GimpConvertDitherType     dither_type,
+                                                               GimpConvertPaletteType    palette_type,
+                                                               gint                      num_cols,
+                                                               gboolean                  alpha_dither,
+                                                               gboolean                  remove_unused,
+                                                               const gchar              *palette);
+G_GNUC_INTERNAL gboolean _gimp_image_convert_cmyk             (GimpImage                *image,
+                                                               GBytes                   *color_profile,
+                                                               GimpColorRenderingIntent  intent,
+                                                               gboolean                  bpc);
+gboolean                 gimp_image_convert_set_dither_matrix (gint                      width,
+                                                               gint                      height,
+                                                               GBytes                   *matrix);
+gboolean                 gimp_image_convert_precision         (GimpImage                *image,
+                                                               GimpPrecision             precision);
 
 
 G_END_DECLS

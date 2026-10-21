@@ -899,6 +899,7 @@ typedef struct
   gpointer              cmyk_transform_alpha;
 
   const Babl           *rgb_space;
+  const Babl           *cmyk_space;             /* Image space when base_type is GIMP_CMYK */
 
   gboolean              ibm_pc_format;          /* If layers are saved in little endian format */
   PSDSupport           *unsupported_features;

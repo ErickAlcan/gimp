@@ -1747,6 +1747,19 @@ gimp_drawable_get_active_mask (GimpDrawable *drawable)
 
   mask = GIMP_DRAWABLE_GET_CLASS (drawable)->get_active_mask (drawable);
 
+  /* the black bit of a non-CMYK drawable is the bit of an absent
+   * component (I7): like the alpha bit below, set or clear it depending
+   * on the other bits, so that an otherwise empty mask stays 0 (nothing
+   * to do) and an otherwise full mask stays GIMP_COMPONENT_MASK_ALL
+   */
+  if (! gimp_drawable_is_cmyk (drawable))
+    {
+      if (mask & ~(GIMP_COMPONENT_MASK_ALPHA | GIMP_COMPONENT_MASK_BLACK))
+        mask |= GIMP_COMPONENT_MASK_BLACK;
+      else
+        mask &= ~GIMP_COMPONENT_MASK_BLACK;
+    }
+
   /* if the drawable doesn't have an alpha channel, the value of the mask's
    * alpha-bit doesn't matter, however, we'd like to have a fully-clear or
    * fully-set mask whenever possible, since it allows us to skip component
@@ -2473,6 +2486,20 @@ gimp_drawable_is_indexed (GimpDrawable *drawable)
   return (gimp_drawable_get_base_type (drawable) == GIMP_INDEXED);
 }
 
+/**
+ * gimp_drawable_is_cmyk:
+ * @drawable: a #GimpDrawable
+ *
+ * Returns: %TRUE if @drawable's buffer has a CMYK format.
+ **/
+gboolean
+gimp_drawable_is_cmyk (GimpDrawable *drawable)
+{
+  g_return_val_if_fail (GIMP_IS_DRAWABLE (drawable), FALSE);
+
+  return (gimp_drawable_get_base_type (drawable) == GIMP_CMYK);
+}
+
 const Babl *
 gimp_drawable_get_component_format (GimpDrawable    *drawable,
                                     GimpChannelType  channel)
@@ -2497,6 +2524,13 @@ gimp_drawable_get_component_format (GimpDrawable    *drawable,
                                          BLUE);
 
     case GIMP_CHANNEL_ALPHA:
+      if (gimp_drawable_is_cmyk (drawable))
+        return babl_format_with_space (
+          babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                     gimp_drawable_get_precision (drawable),
+                                                     ALPHA_C)),
+          gimp_drawable_get_space (drawable));
+
       return gimp_babl_component_format (GIMP_RGB,
                                          gimp_drawable_get_precision (drawable),
                                          ALPHA);
@@ -2509,6 +2543,17 @@ gimp_drawable_get_component_format (GimpDrawable    *drawable,
     case GIMP_CHANNEL_INDEXED:
       return babl_format ("Y u8"); /* will extract grayscale, the best
                                     * we can do here */
+
+    case GIMP_CHANNEL_CYAN:
+    case GIMP_CHANNEL_MAGENTA:
+    case GIMP_CHANNEL_YELLOW:
+    case GIMP_CHANNEL_BLACK:
+      return babl_format_with_space (
+        babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                   gimp_drawable_get_precision (drawable),
+                                                   gimp_drawable_get_component_index (drawable,
+                                                                                      channel))),
+        gimp_drawable_get_space (drawable));
     }
 
   return NULL;
@@ -2527,12 +2572,17 @@ gimp_drawable_get_component_index (GimpDrawable    *drawable,
     case GIMP_CHANNEL_BLUE:    return BLUE;
     case GIMP_CHANNEL_GRAY:    return GRAY;
     case GIMP_CHANNEL_INDEXED: return INDEXED;
+    case GIMP_CHANNEL_CYAN:    return CYAN;
+    case GIMP_CHANNEL_MAGENTA: return MAGENTA;
+    case GIMP_CHANNEL_YELLOW:  return YELLOW;
+    case GIMP_CHANNEL_BLACK:   return BLACK;
     case GIMP_CHANNEL_ALPHA:
       switch (gimp_drawable_get_base_type (drawable))
         {
         case GIMP_RGB:     return ALPHA;
         case GIMP_GRAY:    return ALPHA_G;
         case GIMP_INDEXED: return ALPHA_I;
+        case GIMP_CMYK:    return ALPHA_C;
         }
     }
 

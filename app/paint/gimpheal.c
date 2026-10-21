@@ -32,6 +32,7 @@
 
 #include "paint-types.h"
 
+#include "gegl/gimp-babl.h"
 #include "gegl/gimp-gegl-apply-operation.h"
 #include "gegl/gimp-gegl-loops.h"
 
@@ -202,6 +203,8 @@ gimp_heal_sub (GeglBuffer          *top_buffer,
     format = babl_format ("Y'A float");
   else if (n_components == 4)
     format = babl_format ("R'G'B'A float");
+  else if (n_components == 5 && gimp_babl_format_is_cmyk (format))
+    format = babl_format_with_space ("CMYKA float", format);
   else
     g_return_if_reached ();
 
@@ -245,6 +248,8 @@ gimp_heal_add (GeglBuffer          *first_buffer,
     format = babl_format ("Y'A float");
   else if (n_components == 4)
     format = babl_format ("R'G'B'A float");
+  else if (n_components == 5 && gimp_babl_format_is_cmyk (format))
+    format = babl_format_with_space ("CMYKA float", format);
   else
     g_return_if_reached ();
 
@@ -559,11 +564,16 @@ gimp_heal_motion (GimpSourceCore   *source_core,
       return;
     }
 
-  /*  heal should work in perceptual space, use R'G'B' instead of RGB  */
+  /*  heal should work in perceptual space, use R'G'B' instead of RGB;
+   *  CMYK drawables heal natively, in "CMYKA float" in the image space
+   */
   src_copy = gegl_buffer_new (GEGL_RECTANGLE (paint_area_offset_x,
                                               paint_area_offset_y,
                                               src_rect->width,
                                               src_rect->height),
+                              gimp_drawable_is_cmyk (drawable) ?
+                              babl_format_with_space ("CMYKA float",
+                                                      gimp_drawable_get_format (drawable)) :
                               babl_format ("R'G'B'A float"));
 
   if (! op)

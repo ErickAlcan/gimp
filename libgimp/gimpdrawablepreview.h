@@ -48,6 +48,8 @@ G_GNUC_INTERNAL gboolean  _gimp_drawable_preview_get_bounds      (GimpDrawable  
                                                                   gint            *ymin,
                                                                   gint            *xmax,
                                                                   gint            *ymax);
+G_GNUC_INTERNAL GimpImageType _gimp_drawable_preview_get_image_type (GimpDrawable *drawable);
+G_GNUC_INTERNAL gint          _gimp_drawable_preview_get_bpp        (GimpDrawable *drawable);
 
 
 G_END_DECLS

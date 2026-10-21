@@ -415,7 +415,9 @@ gimp_gegl_apply_flatten (GeglBuffer          *src_buffer,
   g_return_if_fail (GEGL_IS_BUFFER (dest_buffer));
   g_return_if_fail (GEGL_IS_COLOR (background));
 
-  node = gimp_gegl_create_flatten_node (background, composite_space);
+  node = gimp_gegl_create_flatten_node (background,
+                                        gegl_buffer_get_format (dest_buffer),
+                                        composite_space);
 
   gimp_gegl_apply_operation (src_buffer, progress, undo_desc,
                              node, dest_buffer, NULL, FALSE);

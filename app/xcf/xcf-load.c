@@ -209,6 +209,12 @@ static FilterData    * xcf_load_effect        (XcfInfo       *info,
                                                GimpDrawable  *drawable);
 static void            xcf_load_free_effect   (FilterData    *data);
 static void            xcf_load_free_effects  (GList         *effects);
+static void            xcf_load_fix_cmyk_profile (XcfInfo    *info,
+                                                  GimpImage  *image);
+static void            xcf_load_fix_cmyk_layer_modes
+                                                 (XcfInfo    *info,
+                                                  GimpImage  *image);
+
 static GeglColor     * xcf_load_color         (XcfInfo       *info,
                                                goffset        next_prop,
                                                gboolean      *valid_prop_value,
@@ -347,7 +353,10 @@ xcf_load_image_header (Gimp           *gimp,
   xcf_read_int32 (info, (guint32 *) width, 1);
   xcf_read_int32 (info, (guint32 *) height, 1);
   xcf_read_int32 (info, (guint32 *) image_type, 1);
-  if (*image_type < GIMP_RGB || *image_type > GIMP_INDEXED)
+  /* CMYK images (base type 3) exist since XCF version 28 */
+  if (*image_type < GIMP_RGB                                   ||
+      (*image_type > GIMP_INDEXED && *image_type != GIMP_CMYK) ||
+      (*image_type == GIMP_CMYK && info->file_version < 28))
     {
       if (error)
         g_set_error_literal (error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
@@ -459,6 +468,18 @@ xcf_load_image_header (Gimp           *gimp,
       if (error)
         g_set_error_literal (error, G_FILE_ERROR, G_FILE_ERROR_FAILED,
                              _("Invalid image mode and precision combination."));
+      return FALSE;
+    }
+
+  if (*image_type == GIMP_CMYK && ! gimp_babl_has_cmyk_support ())
+    {
+      /* G_FILE_ERROR_NOSYS: not a corrupt file, see xcf_load_image() */
+      if (error)
+        g_set_error_literal (error, G_FILE_ERROR, G_FILE_ERROR_NOSYS,
+                             _("This XCF file contains a CMYK image, but "
+                               "CMYK images are not supported by this "
+                               "installation of GIMP (babl was built "
+                               "without color management support)."));
       return FALSE;
     }
 
@@ -707,6 +728,14 @@ xcf_load_image (Gimp     *gimp,
     goto hard_error;
 
   GIMP_LOG (XCF, "image props loaded");
+
+  /* I1: a CMYK image always has a usable CMYK profile.  The image was
+   * created with the default CMYK profile; it is kept (without undo,
+   * undo is disabled) if the file had no usable one.  This happens
+   * before any layer is created, so all layers get the final space.
+   */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    xcf_load_fix_cmyk_profile (info, image);
 
   /* Order matters for item sets. */
   info->layer_sets = g_list_reverse (info->layer_sets);
@@ -1474,6 +1503,10 @@ xcf_load_image (Gimp     *gimp,
     }
   g_list_free (layers);
 
+  /* I9: no layer of a CMYK image has a legacy layer mode */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    xcf_load_fix_cmyk_layer_modes (info, image);
+
   if (n_broken_layers == 0 && n_broken_channels == 0)
     {
       xcf_load_add_masks (image);
@@ -1586,6 +1619,9 @@ error:
                         _("This XCF file is corrupt!  I have loaded as much "
                           "of it as I can, but it is incomplete."));
 
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    xcf_load_fix_cmyk_layer_modes (info, image);
+
   xcf_load_add_masks (image);
   xcf_load_add_effects (info, image);
 
@@ -1604,7 +1640,14 @@ hard_error:
       broken_paths = NULL;
     }
 
-  if (error && *error)
+  if (error && *error &&
+      g_error_matches (*error, G_FILE_ERROR, G_FILE_ERROR_NOSYS))
+    {
+      /* an unsupported feature (CMYK without CMYK support), the file
+       * is not corrupt: keep the error as it is
+       */
+    }
+  else if (error && *error)
     g_prefix_error (error,
                     /* TODO: localize after string freeze ends. */
                     "This XCF file is corrupt: ");
@@ -2073,6 +2116,10 @@ xcf_load_image_props (XcfInfo   *info,
                   else
                     {
                       gimp_image_parasite_attach (image, p, FALSE);
+
+                      if (! strcmp (gimp_parasite_get_name (p),
+                                    GIMP_ICC_PROFILE_PARASITE_NAME))
+                        info->icc_profile_loaded = TRUE;
                     }
 
                   gimp_parasite_free (p);
@@ -2425,7 +2472,22 @@ xcf_load_layer_props (XcfInfo    *info,
             if (mode == GIMP_LAYER_MODE_OVERLAY_LEGACY)
               mode = GIMP_LAYER_MODE_SOFTLIGHT_LEGACY;
 
-            gimp_layer_set_mode (*layer, mode, FALSE);
+            /* I9: legacy modes are not available in CMYK images.
+             * Detect them on the stored value, gimp_layer_set_mode()
+             * maps them silently for layers of CMYK images.
+             */
+            if (gimp_image_get_base_type (image) == GIMP_CMYK &&
+                gimp_layer_mode_is_legacy (mode))
+              {
+                info->n_cmyk_legacy_modes++;
+
+                gimp_layer_set_mode (*layer, mode, FALSE);
+                gimp_layer_map_legacy_mode (*layer, FALSE);
+              }
+            else
+              {
+                gimp_layer_set_mode (*layer, mode, FALSE);
+              }
           }
           break;
 
@@ -3911,7 +3973,37 @@ xcf_load_layer (XcfInfo    *info,
       has_alpha = TRUE;
       break;
 
+    case GIMP_CMYK_IMAGE:
+      base_type = GIMP_CMYK;
+      has_alpha = FALSE;
+      break;
+
+    case GIMP_CMYKA_IMAGE:
+      base_type = GIMP_CMYK;
+      has_alpha = TRUE;
+      break;
+
     default:
+      g_free (name);
+      return NULL;
+    }
+
+  /* CMYK layers exist since XCF version 28 and only in CMYK images; a
+   * CMYK image only has CMYK layers and (as floating selections of
+   * channels and masks) GRAY layers.
+   */
+  if (base_type == GIMP_CMYK &&
+      (info->file_version < 28 ||
+       gimp_image_get_base_type (image) != GIMP_CMYK))
+    {
+      GIMP_LOG (XCF, "CMYK layer '%s' in a non-CMYK image or XCF < 28", name);
+      g_free (name);
+      return NULL;
+    }
+  else if (gimp_image_get_base_type (image) == GIMP_CMYK &&
+           base_type != GIMP_CMYK && base_type != GIMP_GRAY)
+    {
+      GIMP_LOG (XCF, "non-CMYK layer '%s' in a CMYK image", name);
       g_free (name);
       return NULL;
     }
@@ -4431,6 +4523,86 @@ static void
 xcf_load_free_effects (GList *effects)
 {
   g_list_free_full (effects, (GDestroyNotify) xcf_load_free_effect);
+}
+
+/* I1 (devel-docs/cmyk-mode/INTERFACES.md §13): called right after the
+ * image properties are loaded, before any layer exists.
+ */
+static void
+xcf_load_fix_cmyk_profile (XcfInfo   *info,
+                           GimpImage *image)
+{
+  GimpColorProfile *profile = gimp_image_get_color_profile (image);
+  gboolean          usable;
+
+  usable = (profile                                &&
+            gimp_color_profile_is_cmyk (profile) &&
+            gimp_color_profile_is_cmyk_bidirectional (profile));
+
+  if (usable && info->icc_profile_loaded)
+    return;
+
+  if (! usable)
+    {
+      GimpColorProfile *def;
+
+      def = gimp_get_default_cmyk_profile (info->gimp, NULL, NULL);
+
+      /* undo is disabled while loading */
+      if (! gimp_image_set_color_profile (image, def, NULL))
+        g_warning ("%s: could not attach the default CMYK profile",
+                   G_STRFUNC);
+
+      g_object_unref (def);
+
+      profile = gimp_image_get_color_profile (image);
+    }
+
+  gimp_message (info->gimp, G_OBJECT (info->progress),
+                GIMP_MESSAGE_WARNING,
+                _("This XCF file contains a CMYK image without a usable "
+                  "CMYK color profile. The CMYK profile \"%s\" was "
+                  "assigned."),
+                profile ? gimp_color_profile_get_label (profile) : "?");
+}
+
+/* I9 (INTERFACES §13): no layer of a CMYK image has a legacy mode */
+static void
+xcf_load_fix_cmyk_layer_modes (XcfInfo   *info,
+                               GimpImage *image)
+{
+  GList *layers;
+  GList *iter;
+
+  /* safety net: the stored modes were already mapped while loading
+   * the layer properties (and counted there)
+   */
+  layers = gimp_image_get_layer_list (image);
+
+  for (iter = layers; iter; iter = g_list_next (iter))
+    {
+      if (gimp_layer_map_legacy_mode (iter->data, FALSE))
+        info->n_cmyk_legacy_modes++;
+    }
+
+  g_list_free (layers);
+
+  if (info->n_cmyk_legacy_modes > 0)
+    gimp_message (info->gimp, G_OBJECT (info->progress),
+                  GIMP_MESSAGE_WARNING,
+                  ngettext ("%d layer of this CMYK image used a legacy "
+                            "layer mode, which is not available for CMYK "
+                            "images. It was replaced by the corresponding "
+                            "non-legacy mode.",
+                            "%d layers of this CMYK image used legacy "
+                            "layer modes, which are not available for CMYK "
+                            "images. They were replaced by the corresponding "
+                            "non-legacy modes.",
+                            info->n_cmyk_legacy_modes),
+                  info->n_cmyk_legacy_modes);
+
+  /* warn only once, also if called again on the partial-load path */
+  info->n_cmyk_legacy_modes = 0;
 }
 
 static GeglColor *

@@ -89,6 +89,9 @@ export_merge (GimpImage  *image,
         case GIMP_INDEXED:
           layer_type = GIMP_INDEXEDA_IMAGE;
           break;
+        case GIMP_CMYK:
+          layer_type = GIMP_CMYKA_IMAGE;
+          break;
         default:
           /* In case we add a new type in future. */
           g_return_if_reached ();
@@ -257,6 +260,10 @@ export_convert_indexed (GimpImage  *image,
   GList    *iter;
   gboolean  has_alpha = FALSE;
 
+  /* CMYK images cannot be converted to indexed directly */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    gimp_image_convert_rgb (image);
+
   /* check alpha */
   layers = gimp_image_list_layers (image);
 
@@ -286,7 +293,8 @@ static void
 export_convert_bitmap (GimpImage  *image,
                        GList     **drawables)
 {
-  if (gimp_image_get_base_type (image) == GIMP_INDEXED)
+  if (gimp_image_get_base_type (image) == GIMP_INDEXED ||
+      gimp_image_get_base_type (image) == GIMP_CMYK)
     gimp_image_convert_rgb (image);
 
   gimp_image_convert_indexed (image,
@@ -489,6 +497,33 @@ static ExportAction export_action_convert_indexed_or_grayscale =
   0
 };
 
+static ExportAction export_action_convert_cmyk_rgb =
+{
+  export_convert_rgb,
+  NULL,
+  N_("%s plug-in can't handle CMYK images"),
+  { N_("Convert to RGB"), NULL },
+  0
+};
+
+static ExportAction export_action_convert_cmyk_grayscale =
+{
+  export_convert_grayscale,
+  NULL,
+  N_("%s plug-in can't handle CMYK images"),
+  { N_("Convert to Grayscale"), NULL },
+  0
+};
+
+static ExportAction export_action_convert_cmyk_rgb_or_grayscale =
+{
+  export_convert_rgb,
+  export_convert_grayscale,
+  N_("%s plug-in can't handle CMYK images"),
+  { N_("Convert to RGB"), N_("Convert to Grayscale")},
+  0
+};
+
 static ExportAction export_action_add_alpha =
 {
   export_add_alpha,
@@ -555,6 +590,12 @@ export_action_perform (const ExportAction *action,
  * export anyway, call [method@Image.duplicate] when
  * [enum@Gimp.ExportReturn.IGNORE] was returned.
  *
+ * CMYK images are only passed through unchanged when the capabilities
+ * contain [flags@Gimp.ExportCapabilities.CAN_HANDLE_CMYK]. Otherwise a
+ * converted copy is created (to RGB if the format handles RGB, else to
+ * grayscale, indexed or bitmap), so that existing export plug-ins never
+ * receive CMYK drawables.
+ *
  * Returns: An enum of #GimpExportReturn.
  *
  * Since: 3.0
@@ -583,7 +624,8 @@ gimp_export_options_get_image (GimpExportOptions  *options,
   g_return_val_if_fail (capabilities & (GIMP_EXPORT_CAN_HANDLE_RGB |
                                         GIMP_EXPORT_CAN_HANDLE_GRAY |
                                         GIMP_EXPORT_CAN_HANDLE_INDEXED |
-                                        GIMP_EXPORT_CAN_HANDLE_BITMAP),
+                                        GIMP_EXPORT_CAN_HANDLE_BITMAP |
+                                        GIMP_EXPORT_CAN_HANDLE_CMYK),
                         GIMP_EXPORT_IGNORE);
 
 
@@ -843,6 +885,31 @@ gimp_export_options_get_image (GimpExportOptions  *options,
                 actions = g_slist_prepend (actions,
                                            &export_action_convert_bitmap);
             }
+        }
+      break;
+
+    case GIMP_CMYK:
+      /* Exporters have to opt in to CMYK with GIMP_EXPORT_CAN_HANDLE_CMYK;
+       * all others get a converted copy (to RGB by default).
+       */
+      if (! (capabilities & GIMP_EXPORT_CAN_HANDLE_CMYK))
+        {
+          if ((capabilities & GIMP_EXPORT_CAN_HANDLE_RGB) &&
+              (capabilities & GIMP_EXPORT_CAN_HANDLE_GRAY))
+            actions = g_slist_prepend (actions,
+                                       &export_action_convert_cmyk_rgb_or_grayscale);
+          else if (capabilities & GIMP_EXPORT_CAN_HANDLE_RGB)
+            actions = g_slist_prepend (actions,
+                                       &export_action_convert_cmyk_rgb);
+          else if (capabilities & GIMP_EXPORT_CAN_HANDLE_GRAY)
+            actions = g_slist_prepend (actions,
+                                       &export_action_convert_cmyk_grayscale);
+          else if (capabilities & GIMP_EXPORT_CAN_HANDLE_INDEXED)
+            actions = g_slist_prepend (actions,
+                                       &export_action_convert_indexed);
+          else if (capabilities & GIMP_EXPORT_CAN_HANDLE_BITMAP)
+            actions = g_slist_prepend (actions,
+                                       &export_action_convert_bitmap);
         }
       break;
     }

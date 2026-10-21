@@ -68,7 +68,9 @@
     "next to the built-in grayscale profile when a color profile can be chosen.")
 
 #define CMYK_PROFILE_BLURB \
-  _("The CMYK color profile used to convert between RGB and CMYK.")
+  _("The CMYK color profile used to convert between RGB and CMYK, " \
+    "and the default color profile of new CMYK images. It must be " \
+    "usable for conversions to CMYK (have output tables).")
 
 #define SIMULATION_PROFILE_BLURB \
   _("The color profile to use for soft-proofing from your image's " \

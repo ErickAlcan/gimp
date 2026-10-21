@@ -986,6 +986,32 @@ gimp_image_constructed (GObject *object)
   if (private->base_type == GIMP_INDEXED)
     gimp_image_colormap_init (image);
 
+  /*  I1: a CMYK image always has a CMYK profile; attach the default one
+   *  without undo, so the new image is clean
+   */
+  if (private->base_type == GIMP_CMYK)
+    {
+      GimpColorProfile *profile;
+      GimpParasite     *parasite;
+      const guint8     *data;
+      gsize             length;
+
+      profile  = gimp_get_default_cmyk_profile (image->gimp, NULL, NULL);
+      data     = gimp_color_profile_get_icc_profile (profile, &length);
+      parasite = gimp_parasite_new (GIMP_ICC_PROFILE_PARASITE_NAME,
+                                    GIMP_PARASITE_PERSISTENT |
+                                    GIMP_PARASITE_UNDOABLE,
+                                    length, data);
+
+      gimp_image_parasite_attach (image, parasite, FALSE);
+
+      gimp_parasite_free (parasite);
+      g_object_unref (profile);
+    }
+
+  private->conversion_intent = GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL;
+  private->conversion_bpc    = TRUE;
+
   selection = gimp_selection_new (image,
                                   gimp_image_get_width  (image),
                                   gimp_image_get_height (image));
@@ -1039,8 +1065,32 @@ gimp_image_set_property (GObject      *object,
       break;
 
     case PROP_BASE_TYPE:
-      private->base_type = g_value_get_enum (value);
-      _gimp_image_free_color_transforms (image);
+      {
+        GimpImageBaseType base_type = g_value_get_enum (value);
+
+        if (base_type != private->base_type)
+          {
+            gint i;
+
+            /*  m8: component indices mean different components in
+             *  different base types (3 is alpha in RGB but K in CMYK),
+             *  reset the component state
+             */
+            for (i = 0; i < MAX_CHANNELS; i++)
+              {
+                private->visible[i] = TRUE;
+                private->active[i]  = TRUE;
+              }
+
+            if (private->visible_mask)
+              gegl_node_set (private->visible_mask,
+                             "mask", 0,
+                             NULL);
+          }
+
+        private->base_type = base_type;
+        _gimp_image_free_color_transforms (image);
+      }
       break;
 
     case PROP_PRECISION:
@@ -1675,6 +1725,11 @@ gimp_image_get_proj_format (GimpProjectable *projectable)
       return gimp_image_get_format (image, GIMP_GRAY,
                                     gimp_image_get_precision (image), TRUE,
                                     gimp_image_get_layer_space (image));
+
+    case GIMP_CMYK:
+      return gimp_image_get_format (image, GIMP_CMYK,
+                                    gimp_image_get_precision (image), TRUE,
+                                    gimp_image_get_layer_space (image));
     }
 
   g_return_val_if_reached (NULL);
@@ -2275,6 +2330,9 @@ gimp_image_new (Gimp              *gimp,
 {
   g_return_val_if_fail (GIMP_IS_GIMP (gimp), NULL);
   g_return_val_if_fail (gimp_babl_is_valid (base_type, precision), NULL);
+  /*  callers must check for CMYK support before creating CMYK images  */
+  g_return_val_if_fail (base_type != GIMP_CMYK ||
+                        gimp_babl_has_cmyk_support (), NULL);
 
   return g_object_new (GIMP_TYPE_IMAGE,
                        "gimp",      gimp,
@@ -2397,6 +2455,7 @@ gimp_image_get_format (GimpImage         *image,
     {
     case GIMP_RGB:
     case GIMP_GRAY:
+    case GIMP_CMYK:
       return gimp_babl_format (base_type, precision, with_alpha, space);
 
     case GIMP_INDEXED:
@@ -2412,12 +2471,51 @@ gimp_image_get_format (GimpImage         *image,
   g_return_val_if_reached (NULL);
 }
 
+/**
+ * gimp_image_get_layer_space:
+ * @image: a #GimpImage
+ *
+ * Returns the babl space of the image's layers: the space of the
+ * image's color profile, %NULL meaning sRGB.
+ *
+ * For a CMYK image this is never %NULL: if the stored profile is
+ * missing or not CMYK (a transient state inside undo/redo of a
+ * conversion), the space of the builtin CMYK profile is returned.  For a
+ * non-CMYK image whose stored profile is CMYK (the opposite transient),
+ * %NULL (sRGB) is returned.
+ *
+ * Returns: the image's layer space.
+ **/
 const Babl *
 gimp_image_get_layer_space (GimpImage *image)
 {
+  GimpImagePrivate *private;
+  const Babl       *space;
+
   g_return_val_if_fail (GIMP_IS_IMAGE (image), NULL);
 
-  return GIMP_IMAGE_GET_PRIVATE (image)->layer_space;
+  private = GIMP_IMAGE_GET_PRIVATE (image);
+  space   = private->layer_space;
+
+  if (private->base_type == GIMP_CMYK)
+    {
+      if (! gimp_babl_space_is_cmyk (space))
+        {
+          GimpColorProfile *builtin;
+
+          builtin = gimp_babl_get_builtin_color_profile (GIMP_CMYK,
+                                                         GIMP_TRC_NON_LINEAR);
+          space   = gimp_color_profile_get_space (builtin,
+                                                  GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
+                                                  NULL);
+        }
+    }
+  else if (gimp_babl_space_is_cmyk (space))
+    {
+      space = NULL;
+    }
+
+  return space;
 }
 
 const Babl *
@@ -3417,6 +3515,14 @@ gimp_image_get_xcf_version (GimpImage    *image,
       version = MAX (16, version);
     }
 
+  /* need version 28 for CMYK images */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      ADD_REASON (g_strdup_printf (_("CMYK images were added in %s"),
+                                   "GIMP 3.4"));
+      version = MAX (28, version);
+    }
+
   /* Note: user unit storage was changed in XCF 21, but we can still
    * easily save older XCF (we use the unit name for both singular and
    * plural forms). Therefore we don't bump the XCF version unnecessarily
@@ -3475,6 +3581,7 @@ gimp_image_get_xcf_version (GimpImage    *image,
       if (version_string) *version_string = "GIMP 3.2.6";
       break;
     case 27:
+    case 28:
       if (gimp_version)   *gimp_version   = 340;
       if (version_string) *version_string = "GIMP 3.4";
       break;
@@ -3878,6 +3985,13 @@ gimp_image_get_component_format (GimpImage       *image,
                                          BLUE);
 
     case GIMP_CHANNEL_ALPHA:
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        return babl_format_with_space (
+          babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                     gimp_image_get_precision (image),
+                                                     ALPHA_C)),
+          gimp_image_get_layer_space (image));
+
       return gimp_babl_component_format (GIMP_RGB,
                                          gimp_image_get_precision (image),
                                          ALPHA);
@@ -3890,6 +4004,17 @@ gimp_image_get_component_format (GimpImage       *image,
     case GIMP_CHANNEL_INDEXED:
       return babl_format ("Y u8"); /* will extract grayscale, the best
                                     * we can do here */
+
+    case GIMP_CHANNEL_CYAN:
+    case GIMP_CHANNEL_MAGENTA:
+    case GIMP_CHANNEL_YELLOW:
+    case GIMP_CHANNEL_BLACK:
+      return babl_format_with_space (
+        babl_get_name (gimp_babl_component_format (GIMP_CMYK,
+                                                   gimp_image_get_precision (image),
+                                                   gimp_image_get_component_index (image,
+                                                                                   channel))),
+        gimp_image_get_layer_space (image));
     }
 
   return NULL;
@@ -3908,12 +4033,17 @@ gimp_image_get_component_index (GimpImage       *image,
     case GIMP_CHANNEL_BLUE:    return BLUE;
     case GIMP_CHANNEL_GRAY:    return GRAY;
     case GIMP_CHANNEL_INDEXED: return INDEXED;
+    case GIMP_CHANNEL_CYAN:    return CYAN;
+    case GIMP_CHANNEL_MAGENTA: return MAGENTA;
+    case GIMP_CHANNEL_YELLOW:  return YELLOW;
+    case GIMP_CHANNEL_BLACK:   return BLACK;
     case GIMP_CHANNEL_ALPHA:
       switch (gimp_image_get_base_type (image))
         {
         case GIMP_RGB:     return ALPHA;
         case GIMP_GRAY:    return ALPHA_G;
         case GIMP_INDEXED: return ALPHA_I;
+        case GIMP_CMYK:    return ALPHA_C;
         }
     }
 
@@ -3982,6 +4112,7 @@ gimp_image_get_active_mask (GimpImage *image)
       mask |= (private->active[GREEN]) ? GIMP_COMPONENT_MASK_GREEN : 0;
       mask |= (private->active[BLUE])  ? GIMP_COMPONENT_MASK_BLUE  : 0;
       mask |= (private->active[ALPHA]) ? GIMP_COMPONENT_MASK_ALPHA : 0;
+      mask |= GIMP_COMPONENT_MASK_BLACK; /* I7: absent component */
       break;
 
     case GIMP_GRAY:
@@ -3990,6 +4121,15 @@ gimp_image_get_active_mask (GimpImage *image)
       mask |= (private->active[GRAY])    ? GIMP_COMPONENT_MASK_GREEN : 0;
       mask |= (private->active[GRAY])    ? GIMP_COMPONENT_MASK_BLUE  : 0;
       mask |= (private->active[ALPHA_G]) ? GIMP_COMPONENT_MASK_ALPHA : 0;
+      mask |= GIMP_COMPONENT_MASK_BLACK; /* I7: absent component */
+      break;
+
+    case GIMP_CMYK:
+      mask |= (private->active[CYAN])    ? GIMP_COMPONENT_MASK_CYAN    : 0;
+      mask |= (private->active[MAGENTA]) ? GIMP_COMPONENT_MASK_MAGENTA : 0;
+      mask |= (private->active[YELLOW])  ? GIMP_COMPONENT_MASK_YELLOW  : 0;
+      mask |= (private->active[ALPHA_C]) ? GIMP_COMPONENT_MASK_ALPHA   : 0;
+      mask |= (private->active[BLACK])   ? GIMP_COMPONENT_MASK_BLACK   : 0;
       break;
     }
 
@@ -4066,18 +4206,80 @@ gimp_image_get_visible_mask (GimpImage *image)
       mask |= (private->visible[GREEN]) ? GIMP_COMPONENT_MASK_GREEN : 0;
       mask |= (private->visible[BLUE])  ? GIMP_COMPONENT_MASK_BLUE  : 0;
       mask |= (private->visible[ALPHA]) ? GIMP_COMPONENT_MASK_ALPHA : 0;
+      mask |= GIMP_COMPONENT_MASK_BLACK; /* I7: absent component */
       break;
 
     case GIMP_GRAY:
     case GIMP_INDEXED:
-      mask |= (private->visible[GRAY])  ? GIMP_COMPONENT_MASK_RED   : 0;
-      mask |= (private->visible[GRAY])  ? GIMP_COMPONENT_MASK_GREEN : 0;
-      mask |= (private->visible[GRAY])  ? GIMP_COMPONENT_MASK_BLUE  : 0;
-      mask |= (private->visible[ALPHA]) ? GIMP_COMPONENT_MASK_ALPHA : 0;
+      mask |= (private->visible[GRAY])    ? GIMP_COMPONENT_MASK_RED   : 0;
+      mask |= (private->visible[GRAY])    ? GIMP_COMPONENT_MASK_GREEN : 0;
+      mask |= (private->visible[GRAY])    ? GIMP_COMPONENT_MASK_BLUE  : 0;
+      mask |= (private->visible[ALPHA_G]) ? GIMP_COMPONENT_MASK_ALPHA : 0;
+      mask |= GIMP_COMPONENT_MASK_BLACK; /* I7: absent component */
+      break;
+
+    case GIMP_CMYK:
+      mask |= (private->visible[CYAN])    ? GIMP_COMPONENT_MASK_CYAN    : 0;
+      mask |= (private->visible[MAGENTA]) ? GIMP_COMPONENT_MASK_MAGENTA : 0;
+      mask |= (private->visible[YELLOW])  ? GIMP_COMPONENT_MASK_YELLOW  : 0;
+      mask |= (private->visible[ALPHA_C]) ? GIMP_COMPONENT_MASK_ALPHA   : 0;
+      mask |= (private->visible[BLACK])   ? GIMP_COMPONENT_MASK_BLACK   : 0;
       break;
     }
 
   return mask;
+}
+
+
+/**
+ * _gimp_image_set_conversion_intent:
+ * @image:  a #GimpImage
+ * @intent: the rendering intent
+ * @bpc:    whether to use black point compensation
+ *
+ * Sets the rendering intent and black point compensation used by
+ * gimp_layer_real_convert_type() and gimp_group_layer_convert_type()
+ * while the image's base type is converted.  The default is
+ * %GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL with black point compensation.
+ * Callers reset it after the conversion.
+ **/
+void
+_gimp_image_set_conversion_intent (GimpImage                *image,
+                                   GimpColorRenderingIntent  intent,
+                                   gboolean                  bpc)
+{
+  GimpImagePrivate *private;
+
+  g_return_if_fail (GIMP_IS_IMAGE (image));
+
+  private = GIMP_IMAGE_GET_PRIVATE (image);
+
+  private->conversion_intent = intent;
+  private->conversion_bpc    = bpc ? TRUE : FALSE;
+}
+
+/**
+ * _gimp_image_get_conversion_intent:
+ * @image:  a #GimpImage
+ * @intent: (out) (optional): return location for the rendering intent
+ * @bpc:    (out) (optional): return location for black point compensation
+ *
+ * Returns the conversion settings set with
+ * _gimp_image_set_conversion_intent().
+ **/
+void
+_gimp_image_get_conversion_intent (GimpImage                *image,
+                                   GimpColorRenderingIntent *intent,
+                                   gboolean                 *bpc)
+{
+  GimpImagePrivate *private;
+
+  g_return_if_fail (GIMP_IS_IMAGE (image));
+
+  private = GIMP_IMAGE_GET_PRIVATE (image);
+
+  if (intent) *intent = private->conversion_intent;
+  if (bpc)    *bpc    = private->conversion_bpc;
 }
 
 
@@ -4671,9 +4873,12 @@ gimp_image_parasite_attach (GimpImage          *image,
 
   name = gimp_parasite_get_name (parasite);
 
-  /*  this is so ugly and is only for the PDB  */
-  if (strcmp (name, GIMP_ICC_PROFILE_PARASITE_NAME) == 0 ||
-      strcmp (name, GIMP_SIMULATION_ICC_PROFILE_PARASITE_NAME) == 0)
+  /*  this is so ugly and is only for the PDB; it only applies to the
+   *  image's color profile: a simulation profile equal to the builtin
+   *  profile is a valid simulation profile and must not remove the
+   *  image's color profile
+   */
+  if (strcmp (name, GIMP_ICC_PROFILE_PARASITE_NAME) == 0)
     {
       GimpColorProfile *profile;
       GimpColorProfile *builtin;
@@ -4686,7 +4891,10 @@ gimp_image_parasite_attach (GimpImage          *image,
                                                  NULL);
       builtin = gimp_image_get_builtin_color_profile (image);
 
-      if (gimp_color_profile_is_equal (profile, builtin))
+      /*  CMYK images always carry their profile (I1)  */
+      if (profile &&
+          gimp_image_get_base_type (image) != GIMP_CMYK &&
+          gimp_color_profile_is_equal (profile, builtin))
         {
           /* setting the builtin profile is equal to removing the profile */
           gimp_image_parasite_detach (image, GIMP_ICC_PROFILE_PARASITE_NAME,
@@ -4695,7 +4903,7 @@ gimp_image_parasite_attach (GimpImage          *image,
           return;
         }
 
-      g_object_unref (profile);
+      g_clear_object (&profile);
     }
 
   /*  make a temporary copy of the GimpParasite struct because

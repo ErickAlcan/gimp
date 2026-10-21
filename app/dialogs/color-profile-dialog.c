@@ -28,15 +28,19 @@
 
 #include "libgimpbase/gimpbase.h"
 #include "libgimpcolor/gimpcolor.h"
+#include "libgimpconfig/gimpconfig.h"
 #include "libgimpwidgets/gimpwidgets.h"
 
 #include "dialogs-types.h"
 
 #include "config/gimpcoreconfig.h"
 
+#include "gegl/gimp-babl.h"
+
 #include "core/gimp.h"
 #include "core/gimpcontext.h"
 #include "core/gimpimage.h"
+#include "core/gimpimage-color-profile.h"
 
 #include "widgets/gimphelp-ids.h"
 #include "widgets/gimpviewabledialog.h"
@@ -54,6 +58,8 @@ typedef struct
   GimpImage                *image;
   GimpColorProfile         *current_profile;
   GimpColorProfile         *default_profile;
+  gchar                    *default_label;
+  gchar                    *default_reason;
   GimpColorRenderingIntent  intent;
   gboolean                  bpc;
   GimpColorProfileCallback  callback;
@@ -64,6 +70,8 @@ typedef struct
   GtkWidget                *main_vbox;
   GtkWidget                *combo;
   GtkWidget                *dest_view;
+  GtkWidget                *default_info;
+  GtkWidget                *error_label;
 
 } ProfileDialog;
 
@@ -75,6 +83,11 @@ static void        color_profile_dialog_response (GtkWidget     *dialog,
                                                   ProfileDialog *private);
 static void        color_profile_dest_changed    (GtkWidget     *combo,
                                                   ProfileDialog *private);
+static gboolean    color_profile_dialog_get_target_format
+                                                 (ProfileDialog *private,
+                                                  const Babl   **format);
+static void        color_profile_dialog_init_cmyk_default
+                                                 (ProfileDialog *private);
 
 
 /*  public functions  */
@@ -113,12 +126,15 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
   private->dialog_type     = dialog_type;
   private->image           = image;
   private->current_profile = current_profile;
-  private->default_profile = default_profile;
+  private->default_profile = default_profile ? g_object_ref (default_profile) : NULL;
   private->intent          = intent;
   private->bpc             = bpc;
   private->callback        = callback;
   private->user_data       = user_data;
   private->config          = image->gimp->config->color_management;
+
+  if (dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK)
+    color_profile_dialog_init_cmyk_default (private);
 
   switch (dialog_type)
     {
@@ -212,6 +228,24 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
       dest_label = _("New Color Profile");
       break;
 
+    case COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK:
+      dialog =
+        gimp_viewable_dialog_new (g_list_prepend (NULL, image), context,
+                                  _("CMYK Conversion"),
+                                  "gimp-image-convert-cmyk",
+                                  NULL,
+                                  _("Convert Image to CMYK"),
+                                  parent,
+                                  gimp_standard_help_func,
+                                  GIMP_HELP_IMAGE_CONVERT_CMYK,
+
+                                  _("_Cancel"),  GTK_RESPONSE_CANCEL,
+                                  _("C_onvert"), GTK_RESPONSE_OK,
+
+                                  NULL);
+      dest_label = _("Convert to");
+      break;
+
     default:
       g_return_val_if_reached (NULL);
     }
@@ -266,13 +300,45 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
   gtk_container_add (GTK_CONTAINER (expander), private->dest_view);
   gtk_widget_set_visible (private->dest_view, TRUE);
 
+  private->error_label = gtk_label_new (NULL);
+  gtk_label_set_xalign (GTK_LABEL (private->error_label), 0.0);
+  gtk_label_set_line_wrap (GTK_LABEL (private->error_label), TRUE);
+  gtk_label_set_max_width_chars (GTK_LABEL (private->error_label), 50);
+  gimp_label_set_attributes (GTK_LABEL (private->error_label),
+                             PANGO_ATTR_WEIGHT, PANGO_WEIGHT_BOLD,
+                             -1);
+  gtk_box_pack_start (GTK_BOX (vbox), private->error_label, FALSE, FALSE, 0);
+
+  if (private->default_reason)
+    {
+      /*  tell the user which profile is used by default, and why  */
+      private->default_info = gtk_label_new (NULL);
+      gtk_label_set_xalign (GTK_LABEL (private->default_info), 0.0);
+      gtk_label_set_line_wrap (GTK_LABEL (private->default_info), TRUE);
+      gtk_label_set_max_width_chars (GTK_LABEL (private->default_info), 50);
+      gimp_label_set_attributes (GTK_LABEL (private->default_info),
+                                 PANGO_ATTR_STYLE, PANGO_STYLE_ITALIC,
+                                 -1);
+      gtk_label_set_text (GTK_LABEL (private->default_info),
+                          private->default_reason);
+      gtk_box_pack_start (GTK_BOX (vbox), private->default_info,
+                          FALSE, FALSE, 0);
+    }
+
   g_signal_connect (private->combo, "changed",
                     G_CALLBACK (color_profile_dest_changed),
                     private);
 
   color_profile_dest_changed (private->combo, private);
 
-  if (dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE)
+  if (dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE ||
+      dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK    ||
+      /*  conversions from CMYK always go through the ICC profiles,
+       *  let the user choose how
+       */
+      ((dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_RGB ||
+        dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_GRAY) &&
+       gimp_image_get_base_type (image) == GIMP_CMYK))
     {
       GtkWidget *vbox;
       GtkWidget *hbox;
@@ -322,7 +388,119 @@ color_profile_dialog_new (ColorProfileDialogType    dialog_type,
 static void
 color_profile_dialog_free (ProfileDialog *private)
 {
+  g_clear_object (&private->default_profile);
+
+  g_free (private->default_label);
+  g_free (private->default_reason);
+
   g_slice_free (ProfileDialog, private);
+}
+
+/*  Resolve the default CMYK target the same way the core does
+ *  (gimp_get_default_cmyk_profile(), with the image's soft-proofing
+ *  profile as preferred profile) and remember why that profile was
+ *  chosen, so the dialog can show it (it is not obvious that the
+ *  soft-proofing profile becomes the conversion target).
+ */
+static void
+color_profile_dialog_init_cmyk_default (ProfileDialog *private)
+{
+  Gimp             *gimp      = private->image->gimp;
+  GimpColorProfile *simulation;
+  GimpColorProfile *builtin;
+  GimpColorProfile *profile;
+  GError           *error     = NULL;
+  const gchar      *reason;
+
+  simulation = gimp_image_get_simulation_profile (private->image);
+  builtin    = gimp_babl_get_builtin_color_profile (GIMP_CMYK,
+                                                    GIMP_TRC_NON_LINEAR);
+
+  profile = gimp_get_default_cmyk_profile (gimp, simulation, &error);
+
+  if (simulation && profile == simulation)
+    {
+      private->default_label =
+        g_strdup_printf (_("Soft-proofing profile (%s)"),
+                         gimp_color_profile_get_label (profile));
+      reason = _("The image's soft-proofing profile is used as the CMYK "
+                 "profile by default.");
+    }
+  else if (gimp_color_profile_is_equal (profile, builtin))
+    {
+      private->default_label =
+        g_strdup_printf (_("Built-in CMYK (%s)"),
+                         gimp_color_profile_get_label (profile));
+      reason = _("No usable CMYK profile is set as soft-proofing profile or "
+                 "in Preferences, GIMP's generic built-in CMYK profile is "
+                 "used by default. It is not suitable for print production.");
+    }
+  else
+    {
+      private->default_label =
+        g_strdup_printf (_("Preferred CMYK (%s)"),
+                         gimp_color_profile_get_label (profile));
+      reason = _("The preferred CMYK profile from Preferences is used "
+                 "by default.");
+    }
+
+  if (error)
+    {
+      private->default_reason = g_strdup_printf ("%s\n%s",
+                                                 reason, error->message);
+      g_clear_error (&error);
+    }
+  else
+    {
+      private->default_reason = g_strdup (reason);
+    }
+
+  g_clear_object (&private->default_profile);
+  private->default_profile = profile;
+}
+
+/*  The format the destination profile must be valid for, or FALSE if
+ *  any profile is fine (soft-proofing).
+ */
+static gboolean
+color_profile_dialog_get_target_format (ProfileDialog  *private,
+                                        const Babl    **format)
+{
+  GimpImageBaseType base_type;
+  GimpPrecision     precision = gimp_image_get_precision (private->image);
+
+  switch (private->dialog_type)
+    {
+    case COLOR_PROFILE_DIALOG_ASSIGN_PROFILE:
+    case COLOR_PROFILE_DIALOG_CONVERT_TO_PROFILE:
+      base_type = gimp_image_get_base_type (private->image);
+      if (base_type == GIMP_INDEXED)
+        base_type = GIMP_RGB;
+      break;
+
+    case COLOR_PROFILE_DIALOG_CONVERT_TO_RGB:
+      base_type = GIMP_RGB;
+      break;
+
+    case COLOR_PROFILE_DIALOG_CONVERT_TO_GRAY:
+      base_type = GIMP_GRAY;
+      break;
+
+    case COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK:
+      base_type = GIMP_CMYK;
+      break;
+
+    default:
+      return FALSE;
+    }
+
+  if (base_type == GIMP_CMYK)
+    precision = gimp_babl_precision (gimp_babl_component_type (precision),
+                                     GIMP_TRC_NON_LINEAR);
+
+  *format = gimp_babl_format (base_type, precision, TRUE, NULL);
+
+  return *format != NULL;
 }
 
 static GtkWidget *
@@ -358,13 +536,57 @@ color_profile_combo_box_new (ProfileDialog *private)
           base_type = GIMP_GRAY;
           break;
 
+        case COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK:
+          base_type = GIMP_CMYK;
+          break;
+
         default:
           g_return_val_if_reached (NULL);
         }
 
       precision = gimp_image_get_precision (private->image);
 
-      if (! gimp_color_profile_store_add_defaults (GIMP_COLOR_PROFILE_STORE (store),
+      if (private->dialog_type == COLOR_PROFILE_DIALOG_CONVERT_TO_CMYK)
+        {
+          GimpColorProfile *preferred;
+
+          /*  the default entry is the profile chosen in
+           *  color_profile_dialog_init_cmyk_default()
+           */
+          gimp_color_profile_store_add_file (GIMP_COLOR_PROFILE_STORE (store),
+                                             NULL, private->default_label);
+
+          preferred = gimp_color_config_get_cmyk_color_profile (private->config,
+                                                                NULL);
+
+          if (preferred &&
+              gimp_color_profile_is_cmyk_bidirectional (preferred) &&
+              ! gimp_color_profile_is_equal (preferred,
+                                             private->default_profile))
+            {
+              gchar *path;
+              GFile *file;
+
+              g_object_get (private->config, "cmyk-profile", &path, NULL);
+              file = gimp_file_new_for_config_path (path, NULL);
+              g_free (path);
+
+              if (file)
+                {
+                  gchar *label;
+
+                  label = g_strdup_printf (_("Preferred CMYK (%s)"),
+                                           gimp_color_profile_get_label (preferred));
+                  gimp_color_profile_store_add_file (GIMP_COLOR_PROFILE_STORE (store),
+                                                     file, label);
+                  g_free (label);
+                  g_object_unref (file);
+                }
+            }
+
+          g_clear_object (&preferred);
+        }
+      else if (! gimp_color_profile_store_add_defaults (GIMP_COLOR_PROFILE_STORE (store),
                                                    private->config,
                                                    base_type,
                                                    precision,
@@ -458,8 +680,12 @@ color_profile_dest_changed (GtkWidget     *combo,
 {
   GimpColorProfile *dest_profile = NULL;
   GFile            *file;
+  gboolean          valid        = FALSE;
 
   file = gimp_color_profile_combo_box_get_active_file (GIMP_COLOR_PROFILE_COMBO_BOX (combo));
+
+  if (private->default_info)
+    gtk_widget_set_visible (private->default_info, file == NULL);
 
   if (file)
     {
@@ -472,6 +698,8 @@ color_profile_dest_changed (GtkWidget     *combo,
         {
           gimp_color_profile_view_set_error (GIMP_COLOR_PROFILE_VIEW (private->dest_view),
                                              error->message);
+          gtk_label_set_text (GTK_LABEL (private->error_label),
+                              error->message);
           g_clear_error (&error);
         }
     }
@@ -483,12 +711,42 @@ color_profile_dest_changed (GtkWidget     *combo,
     {
       gimp_color_profile_view_set_error (GIMP_COLOR_PROFILE_VIEW (private->dest_view),
                                          C_("profile", "None"));
+
+      /*  "None" is a valid choice where there is no default profile  */
+      valid = TRUE;
     }
 
   if (dest_profile)
     {
-      gimp_color_profile_view_set_profile (GIMP_COLOR_PROFILE_VIEW (private->dest_view),
-                                           dest_profile);
+      const Babl *format;
+      GError     *error = NULL;
+
+      /*  refuse profiles the core would refuse, in particular CMYK
+       *  profiles which can't be used as conversion target (no output
+       *  tables)
+       */
+      if (color_profile_dialog_get_target_format (private, &format) &&
+          ! gimp_image_validate_color_profile_by_format (format, dest_profile,
+                                                         NULL, &error))
+        {
+          gimp_color_profile_view_set_error (GIMP_COLOR_PROFILE_VIEW (private->dest_view),
+                                             error->message);
+          gtk_label_set_text (GTK_LABEL (private->error_label),
+                              error->message);
+          g_clear_error (&error);
+        }
+      else
+        {
+          gimp_color_profile_view_set_profile (GIMP_COLOR_PROFILE_VIEW (private->dest_view),
+                                               dest_profile);
+          valid = TRUE;
+        }
+
       g_object_unref (dest_profile);
     }
+
+  gtk_widget_set_visible (private->error_label, ! valid);
+
+  gtk_dialog_set_response_sensitive (GTK_DIALOG (private->dialog),
+                                     GTK_RESPONSE_OK, valid);
 }

@@ -225,7 +225,7 @@ gimp_levels_tool_initialize (GimpTool     *tool,
   g_clear_object (&l_tool->histogram_async);
   l_tool->histogram = gimp_histogram_new (config->trc);
 
-  l_tool->histogram_async = gimp_drawable_calculate_histogram_async
+  l_tool->histogram_async = gimp_drawable_calculate_histogram_rgb_async
     (drawable, l_tool->histogram, FALSE);
   gimp_histogram_view_set_histogram (GIMP_HISTOGRAM_VIEW (l_tool->histogram_view),
                                      l_tool->histogram);
@@ -719,7 +719,7 @@ gimp_levels_tool_config_notify (GimpFilterTool   *filter_tool,
       g_clear_object (&levels_tool->histogram_async);
       levels_tool->histogram = gimp_histogram_new (levels_config->trc);
 
-      levels_tool->histogram_async = gimp_drawable_calculate_histogram_async
+      levels_tool->histogram_async = gimp_drawable_calculate_histogram_rgb_async
         (GIMP_TOOL (filter_tool)->drawables->data, levels_tool->histogram, FALSE);
       gimp_histogram_view_set_histogram (GIMP_HISTOGRAM_VIEW (levels_tool->histogram_view),
                                          levels_tool->histogram);
@@ -974,6 +974,13 @@ levels_update_input_bar (GimpLevelsTool *tool)
                                     r, g, b);
       }
       break;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      /*  not a levels channel (the config only accepts VALUE..ALPHA)  */
+      break;
     }
 }
 
@@ -1020,7 +1027,9 @@ levels_menu_sensitivity (gint      value,
     case GIMP_HISTOGRAM_RED:
     case GIMP_HISTOGRAM_GREEN:
     case GIMP_HISTOGRAM_BLUE:
-      return gimp_drawable_is_rgb (drawable);
+      /*  CMYK drawables are processed as their RGB conversion  */
+      return (gimp_drawable_is_rgb (drawable) ||
+              gimp_drawable_is_cmyk (drawable));
 
     case GIMP_HISTOGRAM_ALPHA:
       return gimp_drawable_has_alpha (drawable);
@@ -1029,6 +1038,12 @@ levels_menu_sensitivity (gint      value,
       return FALSE;
 
     case GIMP_HISTOGRAM_LUMINANCE:
+      return FALSE;
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
       return FALSE;
     }
 
@@ -1053,9 +1068,13 @@ levels_stretch_callback (GtkWidget      *widget,
   if (gimp_async_is_synced   (levels_tool->histogram_async) &&
       gimp_async_is_finished (levels_tool->histogram_async))
     {
+      GimpDrawable *drawable = tool->drawables->data;
+
+      /*  a CMYK drawable is stretched on its RGB conversion  */
       gimp_levels_config_stretch (GIMP_LEVELS_CONFIG (filter_tool->config),
                                   levels_tool->histogram,
-                                  gimp_drawable_is_rgb (tool->drawables->data));
+                                  gimp_drawable_is_rgb (drawable) ||
+                                  gimp_drawable_is_cmyk (drawable));
     }
 }
 

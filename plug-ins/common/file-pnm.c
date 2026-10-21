@@ -1361,6 +1361,11 @@ create_pam_header (const gchar      **header_string,
         }
       break;
 
+    /* CMYK images are converted to RGB by the export options (no
+     * GIMP_EXPORT_CAN_HANDLE_CMYK); should one get here anyway, babl
+     * converts the inks to sRGB.
+     */
+    case GIMP_CMYK_IMAGE:
     case GIMP_RGB_IMAGE:
       tupltype = "RGB";
       *np      = 3;
@@ -1376,6 +1381,7 @@ create_pam_header (const gchar      **header_string,
         }
       break;
 
+    case GIMP_CMYKA_IMAGE:
     case GIMP_RGBA_IMAGE:
       tupltype = "RGB_ALPHA";
       *np      = 4;

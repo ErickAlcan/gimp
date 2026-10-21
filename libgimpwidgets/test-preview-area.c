@@ -91,6 +91,11 @@ test_run (GtkWidget *area,
 
   for (enum_value = enum_class->values; enum_value->value_name; enum_value++)
     {
+      /* GimpPreviewArea does not support CMYK image types */
+      if (enum_value->value == GIMP_CMYK_IMAGE ||
+          enum_value->value == GIMP_CMYKA_IMAGE)
+        continue;
+
       /* gimp_preview_area_draw */
       start_time = g_timer_elapsed (timer, NULL);
 

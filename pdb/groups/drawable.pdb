@@ -612,7 +612,8 @@ sub drawable_get_thumbnail_format {
 This procedure returns the drawable's thumbnail Babl format.
 
 Thumbnails are always 8-bit images, see gimp_drawable_thumbnail() and
-gimp_drawable_sub_thmbnail().
+gimp_drawable_sub_thmbnail(). Thumbnails of CMYK drawables are sRGB
+(R'G'B' u8 or R'G'B'A u8).
 HELP
 
     &mitch_pdb_misc('2019', '2.10.14');
@@ -715,7 +716,8 @@ HELP
 	{ name => 'type_with_alpha', type => 'enum GimpImageType
 					      (no GIMP_RGB_IMAGE,
 					       GIMP_GRAY_IMAGE,
-					       GIMP_INDEXED_IMAGE)',
+					       GIMP_INDEXED_IMAGE,
+					       GIMP_CMYK_IMAGE)',
 	  desc => "The drawable's type with alpha" }
     );
 
@@ -812,6 +814,37 @@ HELP
 	code => <<'CODE'
 {
   is_indexed = gimp_drawable_is_indexed (drawable);
+}
+CODE
+    );
+}
+
+sub drawable_is_cmyk {
+    $blurb = 'Returns whether the drawable is a CMYK type.';
+
+    $help = <<HELP;
+This procedure returns TRUE if the specified drawable
+is of type { CMYK, CMYKA }.
+HELP
+
+    $author = $copyright = 'The GIMP Team';
+    $date  = '2026';
+    $since = '3.4';
+
+    @inargs = (
+	{ name => 'drawable', type => 'drawable',
+	  desc => 'The drawable' }
+    );
+
+    @outargs = (
+	{ name => 'is_cmyk', type => 'boolean',
+	  desc => 'TRUE if the drawable is a CMYK type' }
+    );
+
+    %invoke = (
+	code => <<'CODE'
+{
+  is_cmyk = gimp_drawable_is_cmyk (drawable);
 }
 CODE
     );
@@ -936,7 +969,8 @@ sub drawable_thumbnail {
 This function gets data from which a thumbnail of a drawable preview
 can be created. Maximum x or y dimension is 1024 pixels. The pixels are
 returned in RGB[A] or GRAY[A] format. The bpp return value gives the
-number of bytes in the image.
+number of bytes in the image. Thumbnails of CMYK drawables are sRGB:
+RGB[A] pixels, bpp 3 or 4.
 HELP
 
     &andy_pdb_misc('1999');
@@ -1043,7 +1077,8 @@ sub drawable_sub_thumbnail {
 This function gets data from which a thumbnail of a drawable preview
 can be created. Maximum x or y dimension is 1024 pixels. The pixels are
 returned in RGB[A] or GRAY[A] format. The bpp return value gives the
-number of bytes in the image.
+number of bytes in the image. Thumbnails of CMYK drawables are sRGB:
+RGB[A] pixels, bpp 3 or 4.
 HELP
 
     &mitch_pdb_misc('2004', '2.2');
@@ -1287,6 +1322,7 @@ CODE
             drawable_is_rgb
             drawable_is_gray
             drawable_is_indexed
+            drawable_is_cmyk
             drawable_get_bpp
             drawable_get_width
             drawable_get_height

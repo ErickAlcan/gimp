@@ -62,6 +62,10 @@ static gfloat       gimp_color_get_CIE2000_distance (GeglColor  *color1,
  *
  * If @color has no alpha component, this function is a no-op.
  *
+ * For CMYK colors (Since: 3.4), only the alpha channel changes: the ink
+ * values are kept exactly, in @color's own color space, and are never
+ * converted through RGB.
+ *
  * Since: 3.0
  **/
 void
@@ -75,6 +79,30 @@ gimp_color_set_alpha (GeglColor *color,
   guint8      pixel[40];
 
   format = gegl_color_get_format (color);
+
+  if (babl_get_model_flags (babl_format_get_model (format)) &
+      BABL_MODEL_FLAG_CMYK)
+    {
+      const Babl *cmyka;
+      gdouble     cmyka_pixel[5];
+
+      /* stay in the color's CMYK space: going through RGBA would
+       * re-separate the inks (K100 -> rich black)
+       */
+      cmyka = babl_format_with_space ("CMYKA double",
+                                      babl_format_get_space (format));
+
+      gegl_color_get_pixel (color, cmyka, cmyka_pixel);
+      cmyka_pixel[4] = alpha;
+      gegl_color_set_pixel (color, cmyka, cmyka_pixel);
+
+      /* back to the color's own encoding, with alpha */
+      format = gimp_babl_format_get_with_alpha (format);
+      gegl_color_get_pixel (color, format, pixel);
+      gegl_color_set_pixel (color, format, pixel);
+
+      return;
+    }
 
   gegl_color_get_rgba (color, &red, &green, &blue, NULL);
   gegl_color_set_rgba (color, red, green, blue, alpha);
@@ -225,10 +253,7 @@ gimp_color_is_out_of_self_gamut (GeglColor *color)
             oog = ((gray[0] < 0.0 && -gray[0] > CHANNEL_EPSILON)      ||
                    (gray[0] > 1.0 && gray[0] - 1.0 > CHANNEL_EPSILON));
         }
-        else if (model == babl_model ("CMYK")  ||
-                 model == babl_model ("CMYKA") ||
-                 model == babl_model ("cmyk")  ||
-                 model == babl_model ("cmykA"))
+        else if (babl_get_model_flags (model) & BABL_MODEL_FLAG_CMYK)
         {
             gfloat cmyk[4];
 

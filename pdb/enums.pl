@@ -78,13 +78,19 @@ package Gimp::CodeGen::enums;
 	  header => 'libgimpbase/gimpbaseenums.h',
 	  symbols => [ qw(GIMP_CHANNEL_RED GIMP_CHANNEL_GREEN
 			  GIMP_CHANNEL_BLUE GIMP_CHANNEL_GRAY
-			  GIMP_CHANNEL_INDEXED GIMP_CHANNEL_ALPHA) ],
+			  GIMP_CHANNEL_INDEXED GIMP_CHANNEL_ALPHA
+			  GIMP_CHANNEL_CYAN GIMP_CHANNEL_MAGENTA
+			  GIMP_CHANNEL_YELLOW GIMP_CHANNEL_BLACK) ],
 	  mapping => { GIMP_CHANNEL_RED => '0',
 		       GIMP_CHANNEL_GREEN => '1',
 		       GIMP_CHANNEL_BLUE => '2',
 		       GIMP_CHANNEL_GRAY => '3',
 		       GIMP_CHANNEL_INDEXED => '4',
-		       GIMP_CHANNEL_ALPHA => '5' }
+		       GIMP_CHANNEL_ALPHA => '5',
+		       GIMP_CHANNEL_CYAN => '6',
+		       GIMP_CHANNEL_MAGENTA => '7',
+		       GIMP_CHANNEL_YELLOW => '8',
+		       GIMP_CHANNEL_BLACK => '9' }
 	},
     GimpCloneType =>
 	{ contig => 1,
@@ -281,23 +287,27 @@ package Gimp::CodeGen::enums;
     GimpImageBaseType =>
 	{ contig => 1,
 	  header => 'libgimpbase/gimpbaseenums.h',
-	  symbols => [ qw(GIMP_RGB GIMP_GRAY GIMP_INDEXED) ],
+	  symbols => [ qw(GIMP_RGB GIMP_GRAY GIMP_INDEXED GIMP_CMYK) ],
 	  mapping => { GIMP_RGB => '0',
 		       GIMP_GRAY => '1',
-		       GIMP_INDEXED => '2' }
+		       GIMP_INDEXED => '2',
+		       GIMP_CMYK => '3' }
 	},
     GimpImageType =>
 	{ contig => 1,
 	  header => 'libgimpbase/gimpbaseenums.h',
 	  symbols => [ qw(GIMP_RGB_IMAGE GIMP_RGBA_IMAGE GIMP_GRAY_IMAGE
 			  GIMP_GRAYA_IMAGE GIMP_INDEXED_IMAGE
-			  GIMP_INDEXEDA_IMAGE) ],
+			  GIMP_INDEXEDA_IMAGE GIMP_CMYK_IMAGE
+			  GIMP_CMYKA_IMAGE) ],
 	  mapping => { GIMP_RGB_IMAGE => '0',
 		       GIMP_RGBA_IMAGE => '1',
 		       GIMP_GRAY_IMAGE => '2',
 		       GIMP_GRAYA_IMAGE => '3',
 		       GIMP_INDEXED_IMAGE => '4',
-		       GIMP_INDEXEDA_IMAGE => '5' }
+		       GIMP_INDEXEDA_IMAGE => '5',
+		       GIMP_CMYK_IMAGE => '6',
+		       GIMP_CMYKA_IMAGE => '7' }
 	},
     GimpInkBlobType =>
 	{ contig => 1,
@@ -659,7 +669,8 @@ package Gimp::CodeGen::enums;
 			  GIMP_EXPORT_CAN_HANDLE_LAYERS_AS_ANIMATION
 			  GIMP_EXPORT_CAN_HANDLE_LAYER_MASKS
 			  GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS
-			  GIMP_EXPORT_NEEDS_ALPHA GIMP_EXPORT_NEEDS_CROP) ],
+			  GIMP_EXPORT_NEEDS_ALPHA GIMP_EXPORT_NEEDS_CROP
+			  GIMP_EXPORT_CAN_HANDLE_CMYK) ],
 	  mapping => { GIMP_EXPORT_CAN_HANDLE_RGB => '1 << 0',
 		       GIMP_EXPORT_CAN_HANDLE_GRAY => '1 << 1',
 		       GIMP_EXPORT_CAN_HANDLE_INDEXED => '1 << 2',
@@ -670,7 +681,8 @@ package Gimp::CodeGen::enums;
 		       GIMP_EXPORT_CAN_HANDLE_LAYER_MASKS => '1 << 7',
 		       GIMP_EXPORT_CAN_HANDLE_LAYER_EFFECTS => '1 << 8',
 		       GIMP_EXPORT_NEEDS_ALPHA => '1 << 9',
-		       GIMP_EXPORT_NEEDS_CROP => '1 << 10' }
+		       GIMP_EXPORT_NEEDS_CROP => '1 << 10',
+		       GIMP_EXPORT_CAN_HANDLE_CMYK => '1 << 11' }
 	},
     GimpFileChooserAction =>
 	{ contig => 0,
@@ -884,17 +896,23 @@ package Gimp::CodeGen::enums;
 		       GIMP_CURVE_FREE => '1' }
 	},
     GimpHistogramChannel =>
-	{ contig => 1,
+	{ contig => 0,
 	  header => 'core/core-enums.h',
 	  symbols => [ qw(GIMP_HISTOGRAM_VALUE GIMP_HISTOGRAM_RED
 			  GIMP_HISTOGRAM_GREEN GIMP_HISTOGRAM_BLUE
-			  GIMP_HISTOGRAM_ALPHA GIMP_HISTOGRAM_LUMINANCE) ],
+			  GIMP_HISTOGRAM_ALPHA GIMP_HISTOGRAM_LUMINANCE
+			  GIMP_HISTOGRAM_CYAN GIMP_HISTOGRAM_MAGENTA
+			  GIMP_HISTOGRAM_YELLOW GIMP_HISTOGRAM_BLACK) ],
 	  mapping => { GIMP_HISTOGRAM_VALUE => '0',
 		       GIMP_HISTOGRAM_RED => '1',
 		       GIMP_HISTOGRAM_GREEN => '2',
 		       GIMP_HISTOGRAM_BLUE => '3',
 		       GIMP_HISTOGRAM_ALPHA => '4',
-		       GIMP_HISTOGRAM_LUMINANCE => '5' }
+		       GIMP_HISTOGRAM_LUMINANCE => '5',
+		       GIMP_HISTOGRAM_CYAN => '7',
+		       GIMP_HISTOGRAM_MAGENTA => '8',
+		       GIMP_HISTOGRAM_YELLOW => '9',
+		       GIMP_HISTOGRAM_BLACK => '10' }
 	},
     GimpTRCType =>
 	{ contig => 1,

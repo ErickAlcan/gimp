@@ -21,9 +21,13 @@
 
 #include "stamp-pdbgen.h"
 
+#include <cairo.h>
+
 #include <gegl.h>
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
+
+#include "libgimpcolor/gimpcolor.h"
 
 #include "libgimpbase/gimpbase.h"
 
@@ -137,7 +141,15 @@ image_convert_indexed_invoker (GimpProcedure         *procedure,
     {
       GimpPalette *pal = NULL;
 
-      if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error)             &&
+      if (gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          g_set_error_literal (error, GIMP_PDB_ERROR,
+                               GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                               _("CMYK images cannot be converted to indexed "
+                                 "directly. Convert the image to RGB first."));
+          success = FALSE;
+        }
+      else if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error)        &&
           gimp_pdb_image_is_precision (image, GIMP_PRECISION_U8_NON_LINEAR, error) &&
           gimp_babl_is_valid (GIMP_INDEXED, gimp_image_get_precision (image))      &&
           gimp_item_stack_is_flat (GIMP_ITEM_STACK (gimp_image_get_layers (image))))
@@ -182,6 +194,79 @@ image_convert_indexed_invoker (GimpProcedure         *procedure,
                                               dither_type, alpha_dither, FALSE,
                                               pal,
                                               NULL, error);
+    }
+
+  return gimp_procedure_get_return_values (procedure, success,
+                                           error ? *error : NULL);
+}
+
+static GimpValueArray *
+image_convert_cmyk_invoker (GimpProcedure         *procedure,
+                            Gimp                  *gimp,
+                            GimpContext           *context,
+                            GimpProgress          *progress,
+                            const GimpValueArray  *args,
+                            GError               **error)
+{
+  gboolean success = TRUE;
+  GimpImage *image;
+  GBytes *color_profile;
+  gint intent;
+  gboolean bpc;
+
+  image = g_value_get_object (gimp_value_array_index (args, 0));
+  color_profile = g_value_get_boxed (gimp_value_array_index (args, 1));
+  intent = g_value_get_enum (gimp_value_array_index (args, 2));
+  bpc = g_value_get_boolean (gimp_value_array_index (args, 3));
+
+  if (success)
+    {
+      GimpColorProfile *profile = NULL;
+
+      if (gimp_pdb_image_is_not_base_type (image, GIMP_CMYK, error) &&
+          /* only checks CMYK support: the conversion makes the precision
+           * non-linear itself
+           */
+          gimp_pdb_base_type_is_valid (GIMP_CMYK, GIMP_PRECISION_U8_NON_LINEAR,
+                                       error))
+        {
+          if (color_profile && g_bytes_get_size (color_profile) > 0)
+            {
+              profile = gimp_color_profile_new_from_icc_profile (g_bytes_get_data (color_profile, NULL),
+                                                                 g_bytes_get_size (color_profile),
+                                                                 error);
+              if (! profile)
+                {
+                  success = FALSE;
+                }
+              else if (! gimp_color_profile_is_cmyk (profile))
+                {
+                  g_set_error_literal (error, GIMP_PDB_ERROR,
+                                       GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                                       _("Color profile is not for CMYK color space"));
+                  success = FALSE;
+                }
+              else if (! gimp_color_profile_is_cmyk_bidirectional (profile))
+                {
+                  g_set_error_literal (error, GIMP_PDB_ERROR,
+                                       GIMP_PDB_ERROR_INVALID_ARGUMENT,
+                                       _("CMYK color profile cannot be used for "
+                                         "conversion to CMYK (missing output tables)"));
+                  success = FALSE;
+                }
+            }
+        }
+      else
+        {
+          success = FALSE;
+        }
+
+      if (success)
+        success = gimp_image_convert_type_full (image, GIMP_CMYK, profile,
+                                                intent, bpc,
+                                                progress, error);
+
+      g_clear_object (&profile);
     }
 
   return gimp_procedure_get_return_values (procedure, success,
@@ -244,7 +329,8 @@ image_convert_precision_invoker (GimpProcedure         *procedure,
     {
       if (gimp_pdb_image_is_not_base_type (image, GIMP_INDEXED, error) &&
           gimp_pdb_image_is_not_precision (image, precision, error)    &&
-          gimp_babl_is_valid (gimp_image_get_base_type (image), precision))
+          gimp_pdb_base_type_is_valid (gimp_image_get_base_type (image),
+                                       precision, error))
         {
           gimp_image_convert_precision (image, precision,
                                         GEGL_DITHER_NONE,
@@ -275,7 +361,7 @@ register_image_convert_procs (GimpPDB *pdb)
                                "gimp-image-convert-rgb");
   gimp_procedure_set_static_help (procedure,
                                   "Convert specified image to RGB color",
-                                  "This procedure converts the specified image to RGB color. This process requires an image in Grayscale or Indexed color mode. No image content is lost in this process aside from the colormap for an indexed image.",
+                                  "This procedure converts the specified image to RGB color. This process requires an image in Grayscale, Indexed or CMYK color mode. No image content is lost in this process aside from the colormap for an indexed image. A CMYK image is converted with its color profile to the built-in sRGB profile, using the perceptual rendering intent with black point compensation.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -298,7 +384,7 @@ register_image_convert_procs (GimpPDB *pdb)
                                "gimp-image-convert-grayscale");
   gimp_procedure_set_static_help (procedure,
                                   "Convert specified image to grayscale",
-                                  "This procedure converts the specified image to grayscale. This process requires an image in RGB or Indexed color mode.",
+                                  "This procedure converts the specified image to grayscale. This process requires an image in RGB, Indexed or CMYK color mode.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -321,7 +407,7 @@ register_image_convert_procs (GimpPDB *pdb)
                                "gimp-image-convert-indexed");
   gimp_procedure_set_static_help (procedure,
                                   "Convert specified image to and Indexed image",
-                                  "This procedure converts the specified image to 'indexed' color. This process requires an image in RGB or Grayscale mode. The 'palette_type' specifies what kind of palette to use, A type of '0' means to use an optimal palette of 'num_cols' generated from the colors in the image. A type of '1' means to re-use the previous palette (not currently implemented). A type of '2' means to use the so-called WWW-optimized palette. Type '3' means to use only black and white colors. A type of '4' means to use a palette from the gimp palettes directories. The 'dither type' specifies what kind of dithering to use. '0' means no dithering, '1' means standard Floyd-Steinberg error diffusion, '2' means Floyd-Steinberg error diffusion with reduced bleeding, '3' means dithering based on pixel location ('Fixed' dithering).",
+                                  "This procedure converts the specified image to 'indexed' color. This process requires an image in RGB or Grayscale mode; CMYK images must be converted to RGB first. The 'palette_type' specifies what kind of palette to use, A type of '0' means to use an optimal palette of 'num_cols' generated from the colors in the image. A type of '1' means to re-use the previous palette (not currently implemented). A type of '2' means to use the so-called WWW-optimized palette. Type '3' means to use only black and white colors. A type of '4' means to use a palette from the gimp palettes directories. The 'dither type' specifies what kind of dithering to use. '0' means no dithering, '1' means standard Floyd-Steinberg error diffusion, '2' means Floyd-Steinberg error diffusion with reduced bleeding, '3' means dithering based on pixel location ('Fixed' dithering).",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Spencer Kimball & Peter Mattis",
@@ -376,6 +462,52 @@ register_image_convert_procs (GimpPDB *pdb)
   g_object_unref (procedure);
 
   /*
+   * gimp-image-convert-cmyk
+   */
+  procedure = gimp_procedure_new (image_convert_cmyk_invoker, TRUE);
+  gimp_object_set_static_name (GIMP_OBJECT (procedure),
+                               "gimp-image-convert-cmyk");
+  gimp_procedure_set_static_help (procedure,
+                                  "Convert specified image to CMYK color",
+                                  "This procedure converts the specified image to CMYK color, using @color_profile as the CMYK profile of the result, or the default CMYK profile (the color management preferences' CMYK profile, else the built-in one) if @color_profile is %NULL. The profile must be a CMYK profile which can be used in both directions (it must contain output tables). This process requires an image in RGB, Grayscale or Indexed color mode, and GIMP built with CMYK support.\n"
+                                  "\n"
+                                  "@intent and @bpc are used for the color conversion of the image's pixels. The image's precision is changed to the corresponding non-linear precision if needed, as CMYK images are always non-linear.\n"
+                                  "\n"
+                                  "Legacy layer modes are replaced by their non-legacy equivalent, since CMYK images do not support legacy layer modes.",
+                                  NULL);
+  gimp_procedure_set_static_attribution (procedure,
+                                         "The GIMP Team",
+                                         "The GIMP Team",
+                                         "2026");
+  gimp_procedure_add_argument (procedure,
+                               gimp_param_spec_image ("image",
+                                                      "image",
+                                                      "The image",
+                                                      FALSE,
+                                                      GIMP_PARAM_READWRITE));
+  gimp_procedure_add_argument (procedure,
+                               g_param_spec_boxed ("color-profile",
+                                                   "color profile",
+                                                   "The serialized CMYK color profile, or %NULL for the default CMYK profile",
+                                                   G_TYPE_BYTES,
+                                                   GIMP_PARAM_READWRITE));
+  gimp_procedure_add_argument (procedure,
+                               g_param_spec_enum ("intent",
+                                                  "intent",
+                                                  "Rendering intent",
+                                                  GIMP_TYPE_COLOR_RENDERING_INTENT,
+                                                  GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
+                                                  GIMP_PARAM_READWRITE));
+  gimp_procedure_add_argument (procedure,
+                               g_param_spec_boolean ("bpc",
+                                                     "bpc",
+                                                     "Black point compensation",
+                                                     FALSE,
+                                                     GIMP_PARAM_READWRITE));
+  gimp_pdb_register_procedure (pdb, procedure);
+  g_object_unref (procedure);
+
+  /*
    * gimp-image-convert-set-dither-matrix
    */
   procedure = gimp_procedure_new (image_convert_set_dither_matrix_invoker, FALSE);
@@ -418,7 +550,7 @@ register_image_convert_procs (GimpPDB *pdb)
                                "gimp-image-convert-precision");
   gimp_procedure_set_static_help (procedure,
                                   "Convert the image to the specified precision",
-                                  "This procedure converts the image to the specified precision. Note that indexed images cannot be converted and are always in GIMP_PRECISION_U8.",
+                                  "This procedure converts the image to the specified precision. Note that indexed images cannot be converted and are always in GIMP_PRECISION_U8, and that CMYK images only accept non-linear precisions.",
                                   NULL);
   gimp_procedure_set_static_attribution (procedure,
                                          "Michael Natterer <mitch@gimp.org>",

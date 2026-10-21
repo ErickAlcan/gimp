@@ -226,6 +226,7 @@ export_image (GFile                *file,
   gboolean         optimize;
   gboolean         progressive;
   gboolean         cmyk;
+  gboolean         native_cmyk           = FALSE;
   gint             subsmp;
   gboolean         baseline;
   gint             restart;
@@ -269,6 +270,17 @@ export_image (GFile                *file,
   drawable_type = gimp_drawable_type (drawable);
   buffer = gimp_drawable_get_buffer (drawable);
   space = gimp_drawable_get_format (drawable);
+
+  /* CMYK images are exported natively (their inks, their profile);
+   * "cmyk" is the RGB -> CMYK late binding conversion for RGB images.
+   */
+  if (drawable_type == GIMP_CMYK_IMAGE || drawable_type == GIMP_CMYKA_IMAGE)
+    {
+      native_cmyk  = TRUE;
+      cmyk         = FALSE;
+      /* Inks mean nothing without their profile: always embed it */
+      save_profile = TRUE;
+    }
 
   if (! preview)
     gimp_progress_init_printf (_("Exporting '%s'"),
@@ -426,6 +438,17 @@ export_image (GFile                *file,
         encoding = "Y' u8";
       break;
 
+    case GIMP_CMYK_IMAGE:
+    case GIMP_CMYKA_IMAGE:
+      cinfo.input_components = 4;
+      has_alpha = (drawable_type == GIMP_CMYKA_IMAGE);
+
+      /* Adobe convention: inverted inks (see the comment below). The
+       * format is tagged with the image space: babl only inverts.
+       */
+      encoding = "cmyk u8";
+      break;
+
     case GIMP_INDEXED_IMAGE:
     default:
       return FALSE;
@@ -476,7 +499,7 @@ export_image (GFile                *file,
   cinfo.image_width  = gegl_buffer_get_width (buffer);
   cinfo.image_height = gegl_buffer_get_height (buffer);
   /* colorspace of input image */
-  if (cmyk)
+  if (cmyk || native_cmyk)
     {
       cinfo.input_components = 4;
       cinfo.in_color_space   = JCS_CMYK;
@@ -494,7 +517,7 @@ export_image (GFile                *file,
    */
   jpeg_set_defaults (&cinfo);
 
-  if (cmyk_profile)
+  if (cmyk_profile || native_cmyk)
     jpeg_set_colorspace (&cinfo, JCS_CMYK);
 
   jpeg_set_quality (&cinfo, quality, baseline);
@@ -700,8 +723,26 @@ export_image (GFile                *file,
                (gint) (data_length + sizeof (JPEG_APP_HEADER_PS)));
 #endif
 
-              jpeg_write_marker (&cinfo, JPEG_APP0 + 13, full_data,
-                                 data_length + sizeof (JPEG_APP_HEADER_PS));
+              /* A marker holds at most 65533 bytes: split bigger
+               * resources (e.g. a CMYK image's resources) into several
+               * APP13 markers, each with the header; jpeg-load
+               * concatenates them.
+               */
+              {
+                const gsize  max_payload = 65533 - sizeof (JPEG_APP_HEADER_PS);
+                gsize        offset      = 0;
+
+                while (offset < data_length)
+                  {
+                    gsize chunk = MIN (max_payload, data_length - offset);
+
+                    memcpy (full_data + sizeof (JPEG_APP_HEADER_PS),
+                            data_buffer + offset, chunk);
+                    jpeg_write_marker (&cinfo, JPEG_APP0 + 13, full_data,
+                                       chunk + sizeof (JPEG_APP_HEADER_PS));
+                    offset += chunk;
+                  }
+              }
               g_free (full_data);
             }
         }
@@ -889,6 +930,7 @@ save_dialog (GimpProcedure       *procedure,
   GtkWidget        *box;
   GtkWidget        *profile_label;
   GimpColorProfile *cmyk_profile = NULL;
+  GtkWidget        *cmyk_frame;
   gint              orig_quality;
   gint              restart;
   gboolean          run;
@@ -946,9 +988,19 @@ save_dialog (GimpProcedure       *procedure,
                              -1);
   gimp_help_set_help_data (profile_label,
                            _("Name of the color profile used for CMYK export."), NULL);
-  gimp_procedure_dialog_fill_frame (GIMP_PROCEDURE_DIALOG (dialog),
-                                    "cmyk-frame", "cmyk", FALSE,
-                                    "profile-label");
+  cmyk_frame = gimp_procedure_dialog_fill_frame (GIMP_PROCEDURE_DIALOG (dialog),
+                                                 "cmyk-frame", "cmyk", FALSE,
+                                                 "profile-label");
+
+  /* CMYK images are always exported as CMYK, with their own profile:
+   * the soft-proofing conversion option does not apply.
+   */
+  if (gimp_image_get_base_type (image) == GIMP_CMYK)
+    {
+      gtk_widget_set_no_show_all (cmyk_frame, TRUE);
+      gtk_widget_set_visible (cmyk_frame, FALSE);
+    }
+
   cmyk_profile = gimp_image_get_simulation_profile (image);
   if (cmyk_profile)
     {

@@ -375,6 +375,14 @@ file_open_thumbnail (Gimp           *gimp,
                                                   TRUE, NULL);
                       break;
 
+                    case GIMP_CMYK_IMAGE:
+                    case GIMP_CMYKA_IMAGE:
+                      *format = gimp_babl_format (GIMP_CMYK,
+                                                  GIMP_PRECISION_U8_NON_LINEAR,
+                                                  itype == GIMP_CMYKA_IMAGE,
+                                                  NULL);
+                      break;
+
                     case GIMP_INDEXED_IMAGE:
                     case GIMP_INDEXEDA_IMAGE:
                       {

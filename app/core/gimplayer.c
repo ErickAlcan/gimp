@@ -722,6 +722,7 @@ gimp_layer_update_mode_node (GimpLayer *layer)
   GimpLayerColorSpace     visible_blend_space;
   GimpLayerColorSpace     visible_composite_space;
   GimpLayerCompositeMode  visible_composite_mode;
+  gboolean                cmyk_native;
 
   mode_node = gimp_drawable_get_mode_node (GIMP_DRAWABLE (layer));
 
@@ -738,6 +739,9 @@ gimp_layer_update_mode_node (GimpLayer *layer)
        * layer attributes dialog
        */
       visible_composite_space = gimp_layer_get_real_composite_space (layer);
+
+      /* in CMYK images, the mask is always shown CMYK native */
+      cmyk_native = TRUE;
     }
   else
     {
@@ -745,13 +749,20 @@ gimp_layer_update_mode_node (GimpLayer *layer)
       visible_blend_space     = layer->effective_blend_space;
       visible_composite_space = layer->effective_composite_space;
       visible_composite_mode  = layer->effective_composite_mode;
+
+      /* in CMYK images, composite in CMYK unless the layer's *stored*
+       * composite space is explicitly an RGB space
+       */
+      cmyk_native = (gimp_layer_get_composite_space (layer) ==
+                     GIMP_LAYER_COLOR_SPACE_AUTO);
     }
 
-  gimp_gegl_mode_node_set_mode (mode_node,
-                                visible_mode,
-                                visible_blend_space,
-                                visible_composite_space,
-                                visible_composite_mode);
+  gimp_gegl_mode_node_set_mode_full (mode_node,
+                                     visible_mode,
+                                     visible_blend_space,
+                                     visible_composite_space,
+                                     visible_composite_mode,
+                                     cmyk_native);
   gimp_gegl_mode_node_set_opacity (mode_node, layer->opacity);
 }
 
@@ -1103,6 +1114,10 @@ gimp_layer_convert (GimpItem  *item,
     gimp_item_set_image (GIMP_ITEM (layer->mask), dest_image);
 
   GIMP_ITEM_CLASS (parent_class)->convert (item, dest_image, old_type);
+
+  /*  I9: no layer of a CMYK image has a legacy mode  */
+  if (new_base_type == GIMP_CMYK)
+    gimp_layer_map_legacy_mode (layer, FALSE);
 }
 
 static gboolean
@@ -1504,6 +1519,13 @@ gimp_layer_convert_type (GimpDrawable     *drawable,
         gimp_color_profile_get_space (dest_profile,
                                       GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
                                       NULL);
+    }
+  else if (gimp_babl_format_is_cmyk (new_format))
+    {
+      /*  I3: CMYK buffers always carry the image's CMYK space; without
+       *  a dest_profile the image's profile doesn't change
+       */
+      dest_space = gimp_image_get_layer_space (dest_image);
     }
 
   space_format = babl_format_with_space ((const gchar *) new_format, dest_space);
@@ -2114,14 +2136,19 @@ gimp_layer_real_convert_type (GimpLayer        *layer,
 
   if (dest_profile)
     {
+      GimpColorRenderingIntent intent;
+      gboolean                 bpc;
+
       if (! src_profile)
         src_profile =
           gimp_color_managed_get_color_profile (GIMP_COLOR_MANAGED (layer));
 
+      /*  PERCEPTUAL + BPC unless an image type conversion says otherwise  */
+      _gimp_image_get_conversion_intent (dest_image, &intent, &bpc);
+
       gimp_gegl_convert_color_profile (src_buffer,  NULL, src_profile,
                                        dest_buffer, NULL, dest_profile,
-                                       GIMP_COLOR_RENDERING_INTENT_PERCEPTUAL,
-                                       TRUE, progress);
+                                       intent, bpc, progress);
     }
   else
     {
@@ -3011,7 +3038,15 @@ gimp_layer_set_mode (GimpLayer     *layer,
                      GimpLayerMode  mode,
                      gboolean       push_undo)
 {
+  GimpImage *image;
+
   g_return_if_fail (GIMP_IS_LAYER (layer));
+
+  /*  I9: no layer of a CMYK image has a legacy mode  */
+  image = gimp_item_get_image (GIMP_ITEM (layer));
+
+  if (image && gimp_image_get_base_type (image) == GIMP_CMYK)
+    mode = gimp_layer_mode_get_non_legacy (mode);
 
   if (gimp_viewable_get_children (GIMP_VIEWABLE (layer)) == NULL)
     {
@@ -3075,6 +3110,36 @@ gimp_layer_set_mode (GimpLayer     *layer,
       gimp_layer_update_effective_mode (layer);
       gimp_layer_update_excludes_backdrop (layer);
     }
+}
+
+/**
+ * gimp_layer_map_legacy_mode:
+ * @layer:     a #GimpLayer
+ * @push_undo: whether to push an undo step
+ *
+ * Replaces a legacy layer mode of @layer by its non-legacy equivalent
+ * (I9: no layer of a CMYK image has a legacy mode), regardless of the
+ * image's base type.  Used before converting an image to CMYK and
+ * when a layer is moved into a CMYK image.
+ *
+ * Returns: %TRUE if the mode was changed.
+ **/
+gboolean
+gimp_layer_map_legacy_mode (GimpLayer *layer,
+                            gboolean   push_undo)
+{
+  GimpLayerMode mode;
+
+  g_return_val_if_fail (GIMP_IS_LAYER (layer), FALSE);
+
+  mode = gimp_layer_mode_get_non_legacy (layer->mode);
+
+  if (mode == layer->mode)
+    return FALSE;
+
+  gimp_layer_set_mode (layer, mode, push_undo);
+
+  return TRUE;
 }
 
 GimpLayerMode

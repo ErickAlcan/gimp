@@ -76,6 +76,7 @@ load_image (GFile        *file,
   const gchar       *encoding;
   const gchar       *layer_name     = NULL;
   GimpColorProfile  *cmyk_profile   = NULL;
+  gboolean           native_cmyk    = FALSE;
   gint               tile_height;
   gint               i;
   gchar             *photoshop_data = NULL;
@@ -250,6 +251,14 @@ load_image (GFile        *file,
       layer_name = _("JPEG preview");
 
       image = preview_image;
+
+      /* Export preview of a CMYK image */
+      if (cinfo.out_color_space == JCS_CMYK &&
+          gimp_image_get_base_type (image) == GIMP_CMYK)
+        {
+          native_cmyk = TRUE;
+          layer_type  = GIMP_CMYK_IMAGE;
+        }
     }
   else
     {
@@ -263,10 +272,74 @@ load_image (GFile        *file,
       if (cinfo.data_precision > 8 && support_12_bit)
         precision = GIMP_PRECISION_U16_NON_LINEAR;
 
-      image = gimp_image_new_with_precision (cinfo.output_width,
-                                             cinfo.output_height,
-                                             image_type,
-                                             precision);
+      /* Step 5.3 (early): the embedded ICC profile decides whether a
+       * CMYK file (JCS_CMYK, also YCCK which libjpeg outputs as CMYK)
+       * opens as a native CMYK image (INTERFACES §14).
+       */
+      jpeg_icc_read_profile (&cinfo, &icc_data, &icc_length);
+
+      if (cinfo.out_color_space == JCS_CMYK)
+        {
+          GimpColorProfile *profile = NULL;
+
+          native_cmyk = TRUE;
+
+          if (icc_data)
+            profile = gimp_color_profile_new_from_icc_profile (icc_data,
+                                                               icc_length,
+                                                               NULL);
+
+          if (profile && gimp_color_profile_is_cmyk (profile) &&
+              ! gimp_color_profile_is_cmyk_bidirectional (profile))
+            {
+              g_message (_("The embedded CMYK color profile of '%s' cannot "
+                           "be used as a color space (it has no output "
+                           "tables). The image is imported as RGB."),
+                         gimp_file_get_utf8_name (file));
+              native_cmyk = FALSE;
+            }
+
+          if (native_cmyk)
+            {
+              /* Fails without CMYK support: RGB import below */
+              image = gimp_image_new_with_precision (cinfo.output_width,
+                                                     cinfo.output_height,
+                                                     GIMP_CMYK,
+                                                     GIMP_PRECISION_U8_NON_LINEAR);
+              if (image)
+                {
+                  image_type = GIMP_CMYK;
+                  layer_type = GIMP_CMYK_IMAGE;
+
+                  /* Profile before pixels, or they get re-separated */
+                  if (profile && gimp_color_profile_is_cmyk (profile))
+                    {
+                      if (! gimp_image_set_color_profile (image, profile))
+                        g_printerr ("jpeg-load: could not set the CMYK profile: %s\n",
+                                    gimp_pdb_get_last_error (gimp_get_pdb ()));
+                    }
+                  else
+                    {
+                      g_message (_("'%s' has no embedded CMYK color profile. "
+                                   "The default CMYK profile is used; the ink "
+                                   "values are kept unchanged."),
+                                 gimp_file_get_utf8_name (file));
+                    }
+                }
+              else
+                {
+                  native_cmyk = FALSE;
+                }
+            }
+
+          g_clear_object (&profile);
+        }
+
+      if (! image)
+        image = gimp_image_new_with_precision (cinfo.output_width,
+                                               cinfo.output_height,
+                                               image_type,
+                                               precision);
 
       gimp_image_undo_disable (image);
 
@@ -306,7 +379,15 @@ load_image (GFile        *file,
                        (gint) (len - sizeof (JPEG_APP_HEADER_EXIF)));
 #endif
             }
-          else if (marker->marker == JPEG_APP0 + 13)
+          else if (marker->marker == JPEG_APP0 + 13 &&
+                   /* Only well-formed "Photoshop 3.0" markers: a shorter
+                    * one would underflow the length below.  Large
+                    * resource blocks are split over several markers
+                    * (see jpeg-export.c), joined here.
+                    */
+                   len > sizeof (JPEG_APP_HEADER_PS) &&
+                   ! memcmp (data, JPEG_APP_HEADER_PS,
+                             sizeof (JPEG_APP_HEADER_PS)))
             {
               photoshop_data = g_realloc (photoshop_data,
                                           (gsize) photoshop_len + len - sizeof (JPEG_APP_HEADER_PS));
@@ -350,10 +431,10 @@ load_image (GFile        *file,
           g_string_free (comment_buffer, TRUE);
         }
 
-      /* Step 5.3: check for an embedded ICC profile in APP2 markers */
-      jpeg_icc_read_profile (&cinfo, &icc_data, &icc_length);
-
-      if (icc_data)
+      /* Step 5.3: check for an embedded ICC profile in APP2 markers
+       * (read above). A native CMYK image has it already.
+       */
+      if (icc_data && ! native_cmyk)
         {
           GimpColorProfile *profile;
 
@@ -400,7 +481,13 @@ load_image (GFile        *file,
 
   buffer = gimp_drawable_get_buffer (GIMP_DRAWABLE (layer));
 
-  if (cinfo.out_color_space == JCS_CMYK)
+  if (native_cmyk)
+    {
+      /* Adobe convention: inverted inks, written as they are */
+      encoding = "cmyk u8";
+      space    = gimp_drawable_get_format (GIMP_DRAWABLE (layer));
+    }
+  else if (cinfo.out_color_space == JCS_CMYK)
     {
       encoding = "cmyk u8";
       if (cmyk_profile)
@@ -408,7 +495,9 @@ load_image (GFile        *file,
           space = gimp_color_profile_get_space (cmyk_profile,
                                                 GIMP_COLOR_RENDERING_INTENT_RELATIVE_COLORIMETRIC,
                                                 error);
-          gimp_image_set_simulation_profile (image, cmyk_profile);
+          /* An input-only profile can't be a soft-proofing target */
+          if (gimp_color_profile_is_cmyk_bidirectional (cmyk_profile))
+            gimp_image_set_simulation_profile (image, cmyk_profile);
         }
       else
         {

@@ -234,6 +234,7 @@ gimp_component_mask_get_type (void)
     { GIMP_COMPONENT_MASK_GREEN, "GIMP_COMPONENT_MASK_GREEN", "green" },
     { GIMP_COMPONENT_MASK_BLUE, "GIMP_COMPONENT_MASK_BLUE", "blue" },
     { GIMP_COMPONENT_MASK_ALPHA, "GIMP_COMPONENT_MASK_ALPHA", "alpha" },
+    { GIMP_COMPONENT_MASK_BLACK, "GIMP_COMPONENT_MASK_BLACK", "black" },
     { GIMP_COMPONENT_MASK_ALL, "GIMP_COMPONENT_MASK_ALL", "all" },
     { 0, NULL, NULL }
   };
@@ -244,6 +245,7 @@ gimp_component_mask_get_type (void)
     { GIMP_COMPONENT_MASK_GREEN, "GIMP_COMPONENT_MASK_GREEN", NULL },
     { GIMP_COMPONENT_MASK_BLUE, "GIMP_COMPONENT_MASK_BLUE", NULL },
     { GIMP_COMPONENT_MASK_ALPHA, "GIMP_COMPONENT_MASK_ALPHA", NULL },
+    { GIMP_COMPONENT_MASK_BLACK, "GIMP_COMPONENT_MASK_BLACK", NULL },
     { GIMP_COMPONENT_MASK_ALL, "GIMP_COMPONENT_MASK_ALL", NULL },
     { 0, NULL, NULL }
   };
@@ -815,6 +817,10 @@ gimp_histogram_channel_get_type (void)
     { GIMP_HISTOGRAM_ALPHA, "GIMP_HISTOGRAM_ALPHA", "alpha" },
     { GIMP_HISTOGRAM_LUMINANCE, "GIMP_HISTOGRAM_LUMINANCE", "luminance" },
     { GIMP_HISTOGRAM_RGB, "GIMP_HISTOGRAM_RGB", "rgb" },
+    { GIMP_HISTOGRAM_CYAN, "GIMP_HISTOGRAM_CYAN", "cyan" },
+    { GIMP_HISTOGRAM_MAGENTA, "GIMP_HISTOGRAM_MAGENTA", "magenta" },
+    { GIMP_HISTOGRAM_YELLOW, "GIMP_HISTOGRAM_YELLOW", "yellow" },
+    { GIMP_HISTOGRAM_BLACK, "GIMP_HISTOGRAM_BLACK", "black" },
     { 0, NULL, NULL }
   };
 
@@ -827,6 +833,10 @@ gimp_histogram_channel_get_type (void)
     { GIMP_HISTOGRAM_ALPHA, NC_("histogram-channel", "Alpha"), NULL },
     { GIMP_HISTOGRAM_LUMINANCE, NC_("histogram-channel", "Luminance"), NULL },
     { GIMP_HISTOGRAM_RGB, NC_("histogram-channel", "RGB"), NULL },
+    { GIMP_HISTOGRAM_CYAN, NC_("histogram-channel", "Cyan"), NULL },
+    { GIMP_HISTOGRAM_MAGENTA, NC_("histogram-channel", "Magenta"), NULL },
+    { GIMP_HISTOGRAM_YELLOW, NC_("histogram-channel", "Yellow"), NULL },
+    { GIMP_HISTOGRAM_BLACK, NC_("histogram-channel", "Black"), NULL },
     { 0, NULL, NULL }
   };
 

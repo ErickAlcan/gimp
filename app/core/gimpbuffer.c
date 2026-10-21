@@ -247,6 +247,10 @@ gimp_buffer_get_new_preview (GimpViewable *viewable,
                                GIMP_PRECISION_U8_NON_LINEAR,
                                babl_format_has_alpha (format),
                                babl_format_get_space (format));
+  else if (gimp_babl_format_is_cmyk (format))
+    /*  previews of CMYK data are sRGB, NULL space  */
+    format = babl_format (babl_format_has_alpha (format) ?
+                          "R'G'B'A u8" : "R'G'B' u8");
   else
     format = gimp_babl_format (gimp_babl_format_get_base_type (format),
                                gimp_babl_precision (GIMP_COMPONENT_TYPE_U8,

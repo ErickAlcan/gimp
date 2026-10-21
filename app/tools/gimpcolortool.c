@@ -630,7 +630,7 @@ gimp_color_tool_pick (GimpColorTool      *tool,
 {
   GimpColorToolClass *klass;
   const Babl         *sample_format;
-  gdouble             pixel[4];
+  gdouble             pixel[MAX_CHANNELS]; /* I10: native format */
   GeglColor          *color;
 
   klass = GIMP_COLOR_TOOL_GET_CLASS (tool);

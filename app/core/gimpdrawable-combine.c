@@ -25,11 +25,14 @@
 
 #include "core-types.h"
 
+#include "operations/layer-modes/gimp-layer-modes.h"
+
 #include "gegl/gimpapplicator.h"
 
 #include "gimp.h"
 #include "gimpchannel.h"
 #include "gimpchunkiterator.h"
+#include "gimpdrawable.h"
 #include "gimpdrawable-combine.h"
 #include "gimpimage.h"
 
@@ -60,6 +63,10 @@ gimp_drawable_real_apply_buffer (GimpDrawable           *drawable,
   /*  don't apply the mask to itself and don't apply an empty mask  */
   if (GIMP_DRAWABLE (mask) == drawable || gimp_channel_is_empty (mask))
     mask = NULL;
+
+  /*  legacy modes are not available in CMYK images  */
+  if (gimp_drawable_is_cmyk (drawable))
+    mode = gimp_layer_mode_get_non_legacy (mode);
 
   if (! base_buffer)
     base_buffer = gimp_drawable_get_buffer (drawable);

@@ -220,6 +220,7 @@ GimpPrecision     gimp_drawable_get_precision        (GimpDrawable    *drawable)
 gboolean          gimp_drawable_is_rgb               (GimpDrawable    *drawable);
 gboolean          gimp_drawable_is_gray              (GimpDrawable    *drawable);
 gboolean          gimp_drawable_is_indexed           (GimpDrawable    *drawable);
+gboolean          gimp_drawable_is_cmyk              (GimpDrawable    *drawable);
 
 const Babl      * gimp_drawable_get_component_format (GimpDrawable    *drawable,
                                                       GimpChannelType  channel);

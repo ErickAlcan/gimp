@@ -271,6 +271,13 @@ gimp_levels_config_set_property (GObject      *object,
       break;
 
     case PROP_CHANNEL:
+      /*  the per-channel arrays only hold VALUE..ALPHA; ignore the
+       *  derived and the CMYK channels (like GimpCurvesConfig does)
+       */
+      if (g_value_get_enum (value) < GIMP_HISTOGRAM_VALUE ||
+          g_value_get_enum (value) > GIMP_HISTOGRAM_ALPHA)
+        break;
+
       self->channel = g_value_get_enum (value);
       g_object_notify (object, "low-input");
       g_object_notify (object, "high-input");
@@ -644,6 +651,13 @@ gimp_levels_config_input_from_color (GimpLevelsConfig     *config,
 
     case GIMP_HISTOGRAM_LUMINANCE:
       return GIMP_RGB_LUMINANCE (rgba[0], rgba[1], rgba[2]);
+
+    case GIMP_HISTOGRAM_CYAN:
+    case GIMP_HISTOGRAM_MAGENTA:
+    case GIMP_HISTOGRAM_YELLOW:
+    case GIMP_HISTOGRAM_BLACK:
+      /*  levels works on an RGB conversion; no ink channels  */
+      break;
     }
 
   return 0.0;

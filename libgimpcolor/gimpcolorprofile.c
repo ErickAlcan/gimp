@@ -23,6 +23,7 @@
 
 #include "config.h"
 
+#include <math.h>
 #include <string.h>
 
 #include <lcms2.h>
@@ -69,6 +70,10 @@
 
 #ifndef TYPE_CMYKA_16
 #define TYPE_CMYKA_16       (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(2))
+#endif
+
+#ifndef TYPE_CMYKA_8
+#define TYPE_CMYKA_8        (COLORSPACE_SH(PT_CMYK)|EXTRA_SH(1)|CHANNELS_SH(4)|BYTES_SH(1))
 #endif
 
 
@@ -721,6 +726,37 @@ gimp_color_profile_is_cmyk (GimpColorProfile *profile)
   g_return_val_if_fail (GIMP_IS_COLOR_PROFILE (profile), FALSE);
 
   return (cmsGetColorSpace (profile->lcms_profile) == cmsSigCmykData);
+}
+
+/**
+ * gimp_color_profile_is_cmyk_bidirectional:
+ * @profile: a #GimpColorProfile
+ *
+ * Checks whether @profile is a CMYK profile that can be used both to
+ * convert from CMYK and to convert to CMYK, i.e. that supports the
+ * relative colorimetric intent as input and as output profile.
+ *
+ * Only such profiles can be the color profile of a CMYK image or the
+ * target of a conversion to CMYK; input-only CMYK profiles (without
+ * BToA tables) cannot.
+ *
+ * Returns: %TRUE if the profile is CMYK and bidirectional, %FALSE
+ * otherwise.
+ *
+ * Since: 3.4
+ **/
+gboolean
+gimp_color_profile_is_cmyk_bidirectional (GimpColorProfile *profile)
+{
+  g_return_val_if_fail (GIMP_IS_COLOR_PROFILE (profile), FALSE);
+
+  return (gimp_color_profile_is_cmyk (profile) &&
+          cmsIsIntentSupported (profile->lcms_profile,
+                                INTENT_RELATIVE_COLORIMETRIC,
+                                LCMS_USED_AS_INPUT) &&
+          cmsIsIntentSupported (profile->lcms_profile,
+                                INTENT_RELATIVE_COLORIMETRIC,
+                                LCMS_USED_AS_OUTPUT));
 }
 
 
@@ -1494,6 +1530,253 @@ gimp_color_profile_new_d50_gray_lab_trc (void)
   return gimp_color_profile_new_from_icc_profile (data, length, NULL);
 }
 
+/*  The builtin CMYK profile: a simple, generic, synthetic LUT profile
+ *  (devel-docs/cmyk-mode/INTERFACES.md section 3.4).  Ink model (0..1):
+ *  R' = bp + (1 - bp) (1 - C) (1 - K), likewise G' with M and B' with Y,
+ *  R'G'B' taken as sRGB; the inverse uses full GCR with CMY faded to 0
+ *  near black.
+ */
+
+#define CMYK_BUILTIN_BLACK_POINT   0.08
+#define CMYK_BUILTIN_SMOOTH        0.1
+#define CMYK_BUILTIN_A2B_GRID      9
+#define CMYK_BUILTIN_B2A_GRID      17
+#define CMYK_BUILTIN_DESCRIPTION   "GIMP built-in CMYK (generic, not for press)"
+#define CMYK_BUILTIN_COPYRIGHT     "Public Domain"
+
+typedef struct
+{
+  cmsHTRANSFORM rgb_to_lab;
+  cmsHTRANSFORM lab_to_rgb;
+} CmykBuiltinTransforms;
+
+static cmsInt32Number
+gimp_color_profile_cmyk_builtin_a2b (const cmsUInt16Number  in[],
+                                     cmsUInt16Number        out[],
+                                     void                  *cargo)
+{
+  CmykBuiltinTransforms *transforms = cargo;
+  const gdouble          bp         = CMYK_BUILTIN_BLACK_POINT;
+  gdouble                c          = in[0] / 65535.0;
+  gdouble                m          = in[1] / 65535.0;
+  gdouble                y          = in[2] / 65535.0;
+  gdouble                k          = in[3] / 65535.0;
+  gdouble                rgb[3];
+  cmsCIELab              lab;
+
+  rgb[0] = bp + (1.0 - bp) * (1.0 - c) * (1.0 - k);
+  rgb[1] = bp + (1.0 - bp) * (1.0 - m) * (1.0 - k);
+  rgb[2] = bp + (1.0 - bp) * (1.0 - y) * (1.0 - k);
+
+  cmsDoTransform (transforms->rgb_to_lab, rgb, &lab, 1);
+  cmsFloat2LabEncoded (out, &lab);
+
+  return TRUE;
+}
+
+static cmsInt32Number
+gimp_color_profile_cmyk_builtin_b2a (const cmsUInt16Number  in[],
+                                     cmsUInt16Number        out[],
+                                     void                  *cargo)
+{
+  CmykBuiltinTransforms *transforms = cargo;
+  const gdouble          bp         = CMYK_BUILTIN_BLACK_POINT;
+  cmsCIELab              lab;
+  gdouble                rgb[3];
+  gdouble                t[3];
+  gdouble                cmyk[4];
+  gdouble                tmax;
+  gdouble                fade;
+  gint                   i;
+
+  cmsLabEncoded2Float (&lab, in);
+  cmsDoTransform (transforms->lab_to_rgb, &lab, rgb, 1);
+
+  for (i = 0; i < 3; i++)
+    t[i] = CLAMP ((rgb[i] - bp) / (1.0 - bp), 0.0, 1.0);
+
+  tmax = MAX (t[0], MAX (t[1], t[2]));
+  fade = MIN (1.0, tmax / CMYK_BUILTIN_SMOOTH);
+
+  for (i = 0; i < 3; i++)
+    cmyk[i] = tmax > 0.0 ? (1.0 - t[i] / tmax) * fade : 0.0;
+
+  cmyk[3] = 1.0 - tmax;
+
+  for (i = 0; i < 4; i++)
+    out[i] = (cmsUInt16Number) floor (CLAMP (cmyk[i], 0.0, 1.0) * 65535.0 + 0.5);
+
+  return TRUE;
+}
+
+static guint8 *
+gimp_color_profile_new_cmyk_builtin_data (gsize *length)
+{
+  CmykBuiltinTransforms  transforms;
+  cmsHPROFILE            srgb;
+  cmsHPROFILE            lab;
+  cmsHPROFILE            profile;
+  cmsPipeline           *a2b;
+  cmsPipeline           *b2a;
+  cmsStage              *clut;
+  cmsMLU                *mlu;
+  cmsUInt32Number        len  = 0;
+  guint8                *data = NULL;
+
+  srgb = cmsCreate_sRGBProfile ();
+  lab  = cmsCreateLab4Profile (NULL);
+
+  transforms.rgb_to_lab = cmsCreateTransform (srgb, TYPE_RGB_DBL,
+                                              lab,  TYPE_Lab_DBL,
+                                              INTENT_RELATIVE_COLORIMETRIC, 0);
+  transforms.lab_to_rgb = cmsCreateTransform (lab,  TYPE_Lab_DBL,
+                                              srgb, TYPE_RGB_DBL,
+                                              INTENT_RELATIVE_COLORIMETRIC, 0);
+
+  profile = cmsCreateProfilePlaceholder (NULL);
+  cmsSetProfileVersion (profile, 4.3);
+  cmsSetDeviceClass (profile, cmsSigOutputClass);
+  cmsSetColorSpace (profile, cmsSigCmykData);
+  cmsSetPCS (profile, cmsSigLabData);
+  cmsSetHeaderRenderingIntent (profile, INTENT_PERCEPTUAL);
+
+  /*  the identity curve stages are mandatory, without them the
+   *  profile is saved with 0 bytes
+   */
+  a2b  = cmsPipelineAlloc (NULL, 4, 3);
+  clut = cmsStageAllocCLut16bit (NULL, CMYK_BUILTIN_A2B_GRID, 4, 3, NULL);
+  cmsStageSampleCLut16bit (clut, gimp_color_profile_cmyk_builtin_a2b,
+                           &transforms, 0);
+  cmsPipelineInsertStage (a2b, cmsAT_BEGIN,
+                          cmsStageAllocToneCurves (NULL, 4, NULL));
+  cmsPipelineInsertStage (a2b, cmsAT_END, clut);
+  cmsPipelineInsertStage (a2b, cmsAT_END,
+                          cmsStageAllocToneCurves (NULL, 3, NULL));
+
+  b2a  = cmsPipelineAlloc (NULL, 3, 4);
+  clut = cmsStageAllocCLut16bit (NULL, CMYK_BUILTIN_B2A_GRID, 3, 4, NULL);
+  cmsStageSampleCLut16bit (clut, gimp_color_profile_cmyk_builtin_b2a,
+                           &transforms, 0);
+  cmsPipelineInsertStage (b2a, cmsAT_BEGIN,
+                          cmsStageAllocToneCurves (NULL, 3, NULL));
+  cmsPipelineInsertStage (b2a, cmsAT_END, clut);
+  cmsPipelineInsertStage (b2a, cmsAT_END,
+                          cmsStageAllocToneCurves (NULL, 4, NULL));
+
+  cmsWriteTag (profile, cmsSigAToB0Tag, a2b);
+  cmsLinkTag  (profile, cmsSigAToB1Tag, cmsSigAToB0Tag);
+  cmsLinkTag  (profile, cmsSigAToB2Tag, cmsSigAToB0Tag);
+  cmsWriteTag (profile, cmsSigBToA0Tag, b2a);
+  cmsLinkTag  (profile, cmsSigBToA1Tag, cmsSigBToA0Tag);
+  cmsLinkTag  (profile, cmsSigBToA2Tag, cmsSigBToA0Tag);
+  cmsWriteTag (profile, cmsSigMediaWhitePointTag, cmsD50_XYZ ());
+
+  mlu = cmsMLUalloc (NULL, 1);
+  cmsMLUsetASCII (mlu, "en", "US", CMYK_BUILTIN_DESCRIPTION);
+  cmsWriteTag (profile, cmsSigProfileDescriptionTag, mlu);
+  cmsMLUfree (mlu);
+
+  mlu = cmsMLUalloc (NULL, 1);
+  cmsMLUsetASCII (mlu, "en", "US", CMYK_BUILTIN_COPYRIGHT);
+  cmsWriteTag (profile, cmsSigCopyrightTag, mlu);
+  cmsMLUfree (mlu);
+
+  if (cmsSaveProfileToMem (profile, NULL, &len) && len > 100)
+    {
+      data = g_malloc (len);
+
+      if (cmsSaveProfileToMem (profile, data, &len))
+        {
+          gint i;
+
+          /*  fixed creation date 2026-01-01 00:00:00 (bytes 24-35) and
+           *  zero profile ID (bytes 84-99), for deterministic bytes
+           */
+          static const guint8 date[12] = { 0x07, 0xea, 0x00, 0x01, 0x00, 0x01,
+                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+          memcpy (data + 24, date, sizeof (date));
+
+          for (i = 84; i < 100; i++)
+            data[i] = 0;
+
+          *length = len;
+        }
+      else
+        {
+          g_clear_pointer (&data, g_free);
+        }
+    }
+
+  cmsPipelineFree (a2b);
+  cmsPipelineFree (b2a);
+  cmsCloseProfile (profile);
+  cmsDeleteTransform (transforms.rgb_to_lab);
+  cmsDeleteTransform (transforms.lab_to_rgb);
+  cmsCloseProfile (lab);
+  cmsCloseProfile (srgb);
+
+  return data;
+}
+
+static gpointer
+gimp_color_profile_new_cmyk_builtin_once (gpointer data)
+{
+  GimpColorProfile *profile = NULL;
+  guint8           *icc;
+  gsize             length  = 0;
+
+  icc = gimp_color_profile_new_cmyk_builtin_data (&length);
+
+  if (icc)
+    {
+      GError *error = NULL;
+
+      profile = gimp_color_profile_new_from_icc_profile (icc, length, &error);
+
+      if (! profile)
+        {
+          g_critical ("%s: %s", G_STRFUNC, error->message);
+          g_clear_error (&error);
+        }
+
+      g_free (icc);
+    }
+  else
+    {
+      g_critical ("%s: failed to generate the builtin CMYK profile",
+                  G_STRFUNC);
+    }
+
+  return profile;
+}
+
+/**
+ * gimp_color_profile_new_cmyk_builtin:
+ *
+ * This function returns GIMP's builtin CMYK profile "GIMP built-in CMYK
+ * (generic, not for press)": a generic, synthetic, bidirectional CMYK
+ * profile.  It is not meant for printing; use a real press profile for
+ * that.  The profile's bytes are the same in every process and every
+ * session (fixed header date, zero profile ID).
+ *
+ * Returns: (transfer full): a new reference to the process-wide builtin
+ *          CMYK #GimpColorProfile.
+ *
+ * Since: 3.4
+ **/
+GimpColorProfile *
+gimp_color_profile_new_cmyk_builtin (void)
+{
+  static GOnce once = G_ONCE_INIT;
+
+  GimpColorProfile *profile;
+
+  profile = g_once (&once, gimp_color_profile_new_cmyk_builtin_once, NULL);
+
+  return profile ? g_object_ref (profile) : NULL;
+}
+
 /**
  * gimp_color_profile_get_space:
  * @profile: a #GimpColorProfile
@@ -1502,6 +1785,14 @@ gimp_color_profile_new_d50_gray_lab_trc (void)
  *
  * This function returns the #Babl space of @profile, for the
  * specified @intent.
+ *
+ * For CMYK profiles, the same #Babl space is returned, for the
+ * lifetime of the process, for all profiles which are equal according
+ * to gimp_color_profile_is_equal() (i.e. which only differ in their
+ * header, such as their creation date): the space created for the first
+ * such profile.  This makes conversions between such profiles exact
+ * re-encodings instead of color conversions.  @intent is ignored for
+ * CMYK profiles (Since: 3.4).
  *
  * Returns: the new #Babl space.
  *
@@ -1512,16 +1803,66 @@ gimp_color_profile_get_space (GimpColorProfile          *profile,
                               GimpColorRenderingIntent   intent,
                               GError                   **error)
 {
-  const Babl  *space;
-  const gchar *babl_error = NULL;
+  static GMutex       cmyk_mutex;
+  static GHashTable  *cmyk_spaces = NULL;
+  const gsize         header_len  = sizeof (cmsICCHeader);
+  const Babl         *space       = NULL;
+  const gchar        *babl_error  = NULL;
+  gchar              *cmyk_key    = NULL;
 
   g_return_val_if_fail (GIMP_IS_COLOR_PROFILE (profile), NULL);
   g_return_val_if_fail (error == NULL || *error == NULL, NULL);
+
+  if (gimp_color_profile_is_cmyk (profile) && profile->length > header_len)
+    {
+      gchar *checksum;
+
+      /*  key: everything but the header, like gimp_color_profile_is_equal()
+       *  (babl itself keys spaces by all bytes, header included)
+       */
+      checksum = g_compute_checksum_for_data (G_CHECKSUM_SHA256,
+                                              profile->data + header_len,
+                                              profile->length - header_len);
+      cmyk_key = g_strdup_printf ("%" G_GSIZE_FORMAT ":%s",
+                                  profile->length, checksum);
+      g_free (checksum);
+
+      g_mutex_lock (&cmyk_mutex);
+
+      if (! cmyk_spaces)
+        cmyk_spaces = g_hash_table_new_full (g_str_hash, g_str_equal,
+                                             g_free, NULL);
+
+      space = g_hash_table_lookup (cmyk_spaces, cmyk_key);
+
+      if (space)
+        {
+          g_mutex_unlock (&cmyk_mutex);
+          g_free (cmyk_key);
+
+          return space;
+        }
+
+      /*  keep the lock while creating the space, so that two threads
+       *  can't create two spaces for equal profiles
+       */
+    }
 
   space = babl_space_from_icc ((const gchar *) profile->data,
                                profile->length,
                                (BablIccIntent) intent,
                                &babl_error);
+
+  if (cmyk_key)
+    {
+      /*  babl never frees spaces, so neither do we  */
+      if (space)
+        g_hash_table_insert (cmyk_spaces, cmyk_key, (gpointer) space);
+      else
+        g_free (cmyk_key);
+
+      g_mutex_unlock (&cmyk_mutex);
+    }
 
   if (! space)
     g_set_error (error, GIMP_COLOR_PROFILE_ERROR, 0,
@@ -1577,7 +1918,20 @@ gimp_color_profile_get_format (GimpColorProfile          *profile,
  * @format, unless lcms doesn't support @format.
  *
  * Note that this function currently only supports RGB, RGBA, R'G'B',
- * R'G'B'A, Y, YA, Y', Y'A and the cairo-RGB24 and cairo-ARGB32 formats.
+ * R'G'B'A, Y, YA, Y', Y'A, all CMYK models and the cairo-RGB24 and
+ * cairo-ARGB32 formats.
+ *
+ * CMYK formats (Since: 3.4): "CMYK u8", "CMYK u16", "CMYKA u8" and
+ * "CMYKA u16" are used as they are. Every other CMYK format (other
+ * component types, the inverted "cmyk" and "cmykA" models and the
+ * premultiplied "CaMaYaKaA" and "camayakaA" models) is substituted by
+ * "CMYK u16" or "CMYKA u16" in the same color space: lcms' floating
+ * point CMYK is in the range 0..100, and babl does the inversion and
+ * un-premultiplication. The u16 quantization is far below any visible
+ * difference. The returned format keeps the color space of @format;
+ * callers that strip spaces before calling this function (like
+ * #GimpColorTransform) rely on babl treating a CMYK format without
+ * space and the same format with a CMYK space as identical encodings.
  *
  * Returns: (nullable): the #Babl format to be used instead of @format, or %NULL
  *               if the passed @format is not supported at all.
@@ -1595,7 +1949,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
   gboolean    has_alpha;
   gboolean    rgb      = FALSE;
   gboolean    gray     = FALSE;
-  gboolean    cmyk     = FALSE;
   gboolean    linear   = FALSE;
   gboolean    srgb_trc = FALSE;
 
@@ -1607,7 +1960,41 @@ gimp_color_profile_get_lcms_format (const Babl *format,
   model     = babl_format_get_model (format);
   space     = babl_format_get_space (format);
 
-  if (format == babl_format ("cairo-RGB24"))
+  if (babl_get_model_flags (model) & BABL_MODEL_FLAG_CMYK)
+    {
+      gboolean u8    = (type == babl_type ("u8"));
+      gboolean plain = ((model == babl_model ("CMYK") ||
+                         model == babl_model ("CMYKA")) &&
+                        (u8 || type == babl_type ("u16")));
+
+      if (has_alpha)
+        {
+          if (plain)
+            {
+              *lcms_format = u8 ? TYPE_CMYKA_8 : TYPE_CMYKA_16;
+
+              return format;
+            }
+
+          *lcms_format = TYPE_CMYKA_16;
+
+          return babl_format_with_space ("CMYKA u16", space);
+        }
+      else
+        {
+          if (plain)
+            {
+              *lcms_format = u8 ? TYPE_CMYK_8 : TYPE_CMYK_16;
+
+              return format;
+            }
+
+          *lcms_format = TYPE_CMYK_16;
+
+          return babl_format_with_space ("CMYK u16", space);
+        }
+    }
+  else if (format == babl_format ("cairo-RGB24"))
     {
 #if G_BYTE_ORDER == G_LITTLE_ENDIAN
       *lcms_format = TYPE_BGRA_8;
@@ -1660,14 +2047,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
            model == babl_model ("Y'aA"))
     {
       gray = TRUE;
-    }
-  else if (model == babl_model ("CMYK"))
-#if 0
-    /* FIXME missing from babl */
-           || model == babl_model ("CMYKA"))
-#endif
-    {
-      cmyk = TRUE;
     }
   else if (model == babl_model ("CIE Lab")       ||
            model == babl_model ("CIE Lab alpha") ||
@@ -1750,12 +2129,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
                   output_format = babl_format_with_space ("Y'A " babl_t,       \
                                                           space);              \
               }                                                                \
-            else if (cmyk)                                                     \
-              {                                                                \
-                *lcms_format = TYPE_CMYKA_##lcms_t;                            \
-                                                                               \
-                output_format = format;                                        \
-              }                                                                \
           }                                                                    \
         else                                                                   \
           {                                                                    \
@@ -1786,12 +2159,6 @@ gimp_color_profile_get_lcms_format (const Babl *format,
                 else                                                           \
                   output_format = babl_format_with_space ("Y' " babl_t,        \
                                                           space);              \
-              }                                                                \
-            else if (cmyk)                                                     \
-              {                                                                \
-                *lcms_format = TYPE_CMYK_##lcms_t;                             \
-                                                                               \
-                output_format = format;                                        \
               }                                                                \
           }                                                                    \
       }                                                                        \
