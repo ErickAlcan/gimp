@@ -118,3 +118,12 @@ export of a CMYK image crashes the core in the thumbnail code (see risks):
 
 **Deviations from INTERFACES.md**: none in signatures. Behavioural decision: native CMYK
 TIFF/JPEG export always embeds the profile (PSD already did for its CMYK path).
+
+**Integration follow-up (after merging cmyk-mode 808c81a)**: E3 failed on the integrated tree
+because the PSD resource block written into JPEG APP13 contained the final ~80 KB builtin
+profile (marker > 65533 bytes → libjpeg error). Fixed in 44b8606: CMYK metadata no longer
+embeds the profile (the host format does), and jpeg-export splits APP13 into several markers.
+Root cause was in WS06 files, not in WS05's export options. E1–E7 now all pass on the
+integrated tree, E6 included (strict). `decompose.c:628` was already fixed in 27740ab; the
+`file-tga.c:942` fread warning is upstream code, not in the WS06 diff. Remaining suite
+failure on the integrated tree: `cmyk-compositing` C2 (WS02, max_diff 0.0475 > 3/255).
