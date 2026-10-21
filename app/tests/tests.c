@@ -129,6 +129,14 @@ gimp_test_app_activate_callback (GimpCoreApp *app,
   g_idle_add (gimp_osx_focus_window, NULL);
 #endif
   gimp->initialized = TRUE;
+
+  /* Under Xvfb there is no window manager, so no window ever receives
+   * the focus and "focused-once" is never emitted: the device manager
+   * then has no current device, and gimp_devices_save() at exit
+   * criticals in gimp_device_info_save_tool().  Emit it here.
+   */
+  gimp_set_focused_once (gimp);
+
   gimp_core_app_set_exit_status (app, g_test_run ());
 
   /* Don't write files to the source dir */
