@@ -1257,6 +1257,48 @@ assert_same_inks (GimpDrawable        *src,
   g_bytes_unref (b);
 }
 
+/*  Like assert_same_inks(), for results that went through layer-mode
+ *  compositing (gimp_edit_copy() of a selection clears the clipboard
+ *  image outside the selection, anchoring composites the floating
+ *  selection).  GIMP's layer modes process at float for every
+ *  precision, so U32 and DOUBLE pixels come back rounded to float (RGB
+ *  images too; 02's I6 scope): compare those bit-identically at float.
+ */
+static void
+assert_same_inks_composited (GimpDrawable        *src,
+                             const GeglRectangle *src_rect,
+                             GimpDrawable        *dest,
+                             const GeglRectangle *dest_rect)
+{
+  GimpImage     *src_image = gimp_item_get_image (GIMP_ITEM (src));
+  GimpPrecision  precision = gimp_image_get_precision (src_image);
+  const Babl    *format;
+  GBytes        *a;
+  GBytes        *b;
+
+  if (gimp_babl_component_type (precision) != GIMP_COMPONENT_TYPE_DOUBLE &&
+      gimp_babl_component_type (precision) != GIMP_COMPONENT_TYPE_U32)
+    {
+      assert_same_inks (src, src_rect, dest, dest_rect);
+      return;
+    }
+
+  g_assert_true (gimp_image_get_layer_space (src_image) ==
+                 gimp_image_get_layer_space (gimp_item_get_image (GIMP_ITEM (dest))));
+  g_assert_true (gimp_drawable_is_cmyk (dest));
+
+  format = babl_format_with_space ("CMYKA float",
+                                   gimp_image_get_layer_space (src_image));
+
+  a = read_bytes (src,  src_rect,  format);
+  b = read_bytes (dest, dest_rect, format);
+
+  assert_bytes_equal (a, b);
+
+  g_bytes_unref (a);
+  g_bytes_unref (b);
+}
+
 static GimpLayer *
 paste_one (GimpImage     *image,
            GimpDrawable  *target,
@@ -1386,18 +1428,20 @@ i9_same_image_paste_copy (void)
   g_assert_cmpint (off_y, ==, SEL_Y);
   g_assert_cmpint (gimp_item_get_width  (GIMP_ITEM (pasted)), ==, SEL_W);
   g_assert_cmpint (gimp_item_get_height (GIMP_ITEM (pasted)), ==, SEL_H);
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+  assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
+                               GIMP_DRAWABLE (pasted), &full);
 
   g_test_message ("I9: copy, new layer");
   pasted = paste_one (image, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER);
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+  assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
+                               GIMP_DRAWABLE (pasted), &full);
 
   g_test_message ("I9: copy, new image");
   new_image = gimp_edit_paste_as_new_image (gimp, copy, context ());
   g_assert_nonnull (new_image);
   assert_cmyk_image (new_image, gimp_image_get_color_profile (image));
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect,
-                    GIMP_DRAWABLE (gimp_image_get_layer_iter (new_image)->data), &full);
+  assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
+                               GIMP_DRAWABLE (gimp_image_get_layer_iter (new_image)->data), &full);
   gimp_container_remove (gimp->images, GIMP_OBJECT (new_image));
   g_object_unref (new_image);
 
@@ -1431,8 +1475,8 @@ i9_same_image_floating (void)
 
   floating_sel_anchor (floating);
 
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect,
-                    GIMP_DRAWABLE (target), &sel_rect);
+  assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
+                               GIMP_DRAWABLE (target), &sel_rect);
 
   g_object_unref (copy);
   g_object_unref (image);
@@ -1505,7 +1549,8 @@ i10_cross_image (void)
   /*  paste of a copied selection (clears the clipboard image, WS02)  */
   copy = copy_selection (a, layer);
   pasted = paste_one (b, NULL, copy, GIMP_PASTE_TYPE_NEW_LAYER_IN_PLACE);
-  assert_same_inks (GIMP_DRAWABLE (layer), &sel_rect, GIMP_DRAWABLE (pasted), &full);
+  assert_same_inks_composited (GIMP_DRAWABLE (layer), &sel_rect,
+                               GIMP_DRAWABLE (pasted), &full);
   g_object_unref (copy);
 
   /*  paste of a buffer tagged with A's profile  */
