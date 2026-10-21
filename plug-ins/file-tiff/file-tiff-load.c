@@ -260,6 +260,8 @@ get_extra_channels_count (gushort  photomet,
                           gushort  spp,
                           gboolean alpha)
 {
+  gint base;
+
   switch (photomet)
     {
     case PHOTOMETRIC_RGB:
@@ -268,18 +270,20 @@ get_extra_channels_count (gushort  photomet,
     case PHOTOMETRIC_ICCLAB:
     case PHOTOMETRIC_ITULAB:
     case PHOTOMETRIC_LOGLUV:
-      if (spp >= 3)
-        return spp - 3 - (alpha ? 1 : 0);
-      else
-        return spp - 1 - (alpha ? 1 : 0);
+      base = (spp >= 3) ? 3 : 1;
       break;
     case PHOTOMETRIC_SEPARATED:
-      return spp - 4 - (alpha ? 1 : 0);
+      base = 4;
       break;
     default:
-      return spp - 1 - (alpha ? 1 : 0);
+      base = 1;
       break;
     }
+
+  base += alpha ? 1 : 0;
+
+  /* Never underflow: too few samples are refused by the caller */
+  return (spp > base) ? spp - base : 0;
 }
 
 GimpPDBStatusType
@@ -1109,6 +1113,16 @@ load_image (GimpProcedure        *procedure,
           {
             guint16 inkset = INKSET_CMYK;
 
+            /* The CMYK(A) formats below read 4 (5) samples per pixel */
+            if (spp < 4 + (alpha ? 1 : 0))
+              {
+                g_message (_("Unsupported number of samples per pixel (%d) "
+                             "for a CMYK image on page %d."),
+                           spp, li + 1);
+                g_clear_object (&profile);
+                continue;
+              }
+
             is_cmyk = TRUE;
 
             TIFFGetFieldDefaulted (tif, TIFFTAG_INKSET, &inkset);
@@ -1828,13 +1842,6 @@ load_image (GimpProcedure        *procedure,
           layer = gimp_layer_new (*image, layer_name, cols, rows, layer_type, 100,
                                   gimp_image_get_default_new_layer_mode (*image));
           g_free (layer_name);
-
-          /* Until gimp-layer-new honours GIMP_CMYKA_IMAGE (WS05,
-           * INTERFACES §12), a CMYKA layer may come back without alpha.
-           */
-          if (layer_type == GIMP_CMYKA_IMAGE &&
-              ! gimp_drawable_has_alpha (GIMP_DRAWABLE (layer)))
-            gimp_layer_add_alpha (layer);
 
           if (! base_format && image_type == GIMP_INDEXED)
             {

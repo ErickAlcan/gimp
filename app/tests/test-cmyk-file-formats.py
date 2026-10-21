@@ -138,7 +138,7 @@ def load(path):
 ################################################################################
 # Minimal TIFF writer / reader (baseline, little endian, one strip)
 
-def write_cmyk_tiff(path, w, h, pixels, icc=None):
+def write_cmyk_tiff(path, w, h, pixels, icc=None, spp=4):
   SHORT, LONG, UNDEFINED = 3, 4, 7
   entries = []        # (tag, type, count, value bytes)
 
@@ -149,11 +149,11 @@ def write_cmyk_tiff(path, w, h, pixels, icc=None):
 
   short(256, w)
   short(257, h)
-  short(258, 8, 8, 8, 8)
+  short(258, *([8] * spp))
   short(259, 1)                 # no compression
   short(262, 5)                 # separated
   long_(273, 0)                 # strip offset, patched below
-  short(277, 4)
+  short(277, spp)
   short(278, h)
   long_(279, len(pixels))
   short(284, 1)                 # contiguous
@@ -427,4 +427,131 @@ def run_tests():
   loaded.delete()
 
 
+################################################################################
+# Hostile inputs (REVIEW-02 M2): must fail or degrade cleanly, never crash.
+# The test runner turns any plug-in or core crash into a test failure.
+
+def hostile_tiff_spp():
+  # SEPARATED + InkSet CMYK with fewer samples than inks
+  for spp in (2, 3):
+    path = os.path.join(tmpdir, f'cmyk-hostile-spp{spp}.tif')
+    write_cmyk_tiff(path, 4, 4, bytes((i * 37) & 0xff for i in range(16 * spp)),
+                    spp=spp)
+    loaded = load(path)
+    gimp_assert(f"hostile TIFF spp={spp}: refused (no image)", loaded is None)
+
+
+def write_cmyk_psd(path, layer_channel_ids, w=4, h=4):
+  '''8-bit CMYK PSD (4 merged channels) with one layer made of the given
+  channel ids (0..3 = C, M, Y, K, -1 = alpha), all channels zero.'''
+  rec  = struct.pack('>iiii', 0, 0, h, w)
+  rec += struct.pack('>H', len(layer_channel_ids))
+  for cid in layer_channel_ids:
+    rec += struct.pack('>hI', cid, 2 + w * h)
+  rec += b'8BIM' + b'norm' + bytes([255, 0, 0, 0])
+  extra = struct.pack('>I', 0) + struct.pack('>I', 0) + b'\x01L\0\0'
+  rec += struct.pack('>I', len(extra)) + extra
+  chdata = b''.join(struct.pack('>H', 0) + bytes(w * h) for _ in layer_channel_ids)
+  info = struct.pack('>h', 1) + rec + chdata
+  if len(info) % 2:
+    info += b'\0'
+  layers = struct.pack('>I', len(info)) + info + struct.pack('>I', 0)
+
+  hdr = b'8BPS' + struct.pack('>H', 1) + b'\0' * 6 + \
+        struct.pack('>HIIHH', 4, h, w, 8, 4)          # 4 channels, CMYK mode
+  with open(path, 'wb') as f:
+    f.write(hdr + struct.pack('>I', 0) + struct.pack('>I', 0) +
+            struct.pack('>I', len(layers)) + layers +
+            struct.pack('>H', 0) + bytes(w * h * 4))
+
+def hostile_psd_layer_channels():
+  # Control: a complete C, M, Y, K, alpha layer
+  path = os.path.join(tmpdir, 'cmyk-hostile-layer-control.psd')
+  write_cmyk_psd(path, [0, 1, 2, 3, -1])
+  loaded = load(path)
+  gimp_assert("PSD control layer: loads as CMYK",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  loaded.delete()
+
+  # A layer with only C, M and alpha in a CMYK file
+  path = os.path.join(tmpdir, 'cmyk-hostile-layer-2ch.psd')
+  write_cmyk_psd(path, [0, 1, -1])
+  loaded = load(path)
+  gimp_assert("hostile PSD layer with 2 of 4 inks: loads",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  layers = loaded.get_layers()
+  gimp_assert("hostile PSD layer: kept, left transparent",
+              len(layers) == 1 and layers[0].has_alpha() and
+              max(read_pixels(layers[0], 'CMYKA u8')[4::5]) == 0)
+  loaded.delete()
+
+
+def psd_resource(rid, payload):
+  r = b'8BIM' + struct.pack('>H', rid) + b'\0\0' + struct.pack('>I', len(payload)) + payload
+  return r + (b'\0' if len(payload) % 2 else b'')
+
+def jpeg_insert_markers(src, dst, markers):
+  '''Copies JPEG src to dst with raw markers inserted right after SOI.'''
+  with open(src, 'rb') as f:
+    data = f.read()
+  gimp_assert("JPEG starts with SOI", data[:2] == b'\xff\xd8')
+  with open(dst, 'wb') as f:
+    f.write(data[:2] + b''.join(markers) + data[2:])
+
+def app13_markers(block, max_payload=65533 - 14):
+  '''Splits a resource block over APP13 markers like jpeg-export does.'''
+  header  = b'Photoshop 3.0\0'
+  markers = []
+  for off in range(0, len(block), max_payload):
+    payload = header + block[off:off + max_payload]
+    markers.append(b'\xff\xed' + struct.pack('>H', 2 + len(payload)) + payload)
+  return markers
+
+def hostile_jpeg_app13():
+  image, layer = new_cmyk_image(16, 16, 1, False)
+  base = os.path.join(tmpdir, 'cmyk-app13-base.jpg')
+  gimp_assert("APP13 base JPEG export", export('file-jpeg-export', image, base,
+                                                quality=1.0))
+  image.delete()
+
+  # A marker shorter than the "Photoshop 3.0" header
+  path = os.path.join(tmpdir, 'cmyk-hostile-app13-short.jpg')
+  jpeg_insert_markers(base, path, [b'\xff\xed\x00\x06Ph\x00\x00'])
+  loaded = load(path)
+  gimp_assert("hostile JPEG with a 4-byte APP13: loads as CMYK",
+              loaded is not None and
+              loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+  loaded.delete()
+
+  # A resource block larger than one marker, split like jpeg-export does:
+  # a 70000-byte filler resource (obsolete id 1000, ignored by the
+  # loader), then grid & guides (1032) with 2 guides, which straddle
+  # the marker boundary only if the joining code is right.
+  guides = struct.pack('>IIII', 1, 576, 576, 2) + \
+           struct.pack('>IB', 3 * 32, 0) + struct.pack('>IB', 5 * 32, 1)
+  block  = psd_resource(1000, bytes(70000)) + psd_resource(1032, guides)
+  for label, max_payload in (('split', 65533 - 14), ('split-tiny', 7)):
+    markers = app13_markers(block, max_payload)
+    gimp_assert(f"APP13 {label}: several markers", len(markers) > 1)
+    path = os.path.join(tmpdir, f'cmyk-app13-{label}.jpg')
+    jpeg_insert_markers(base, path, markers)
+    loaded = load(path)
+    gimp_assert(f"APP13 {label}: loads as CMYK",
+                loaded is not None and
+                loaded.get_base_type() == Gimp.ImageBaseType.CMYK)
+    vguide = loaded.find_next_guide(0)
+    hguide = loaded.find_next_guide(vguide) if vguide else 0
+    found  = sorted([(loaded.get_guide_orientation(g).value_nick,
+                      loaded.get_guide_position(g)) for g in (vguide, hguide) if g])
+    print(f"APP13 {label}: guides {found}")
+    gimp_assert(f"APP13 {label}: both guides restored from the joined block",
+                found == [('horizontal', 5), ('vertical', 3)])
+    loaded.delete()
+
+
 run_tests()
+hostile_tiff_spp()
+hostile_psd_layer_channels()
+hostile_jpeg_app13()
