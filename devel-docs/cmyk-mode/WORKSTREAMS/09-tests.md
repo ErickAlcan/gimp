@@ -138,3 +138,15 @@ Python and does not start GIMP.
 workstreams (`test-cmyk-image.c`, `-compositing.c`, `-histogram.c`, `test-xcf.c`,
 `test-cmyk-file-formats.py`, `libgimp/tests/*`) as the integration owner of `app/tests/*` and
 `libgimp/tests/*`; the only non-test change is db1645f (WS06's file, own commit).
+
+**Final round (on `cmyk-final`, merged fast-forward into ws/09)**
+* Full suite 32: 31 OK, 1 FAIL (`appdata_file`), 0 SKIP. Precision knobs u8/half/double/
+  u16/float, both real profiles, double + FOGRA39, NO_CMYK and ASan (default, double, half,
+  both profiles) all OK after 75d46b5.
+* 75d46b5 (**owner 02**): the native CMYK read path (`aux_native_supported()`) and the
+  validate handler (`cmyk_render_format()`) took CMYK half for u16 (2 bytes per component);
+  with `GIMP_TESTING_CMYK_PRECISION=half` C1 and I9 failed on `cmyk-final`. The component type
+  is now checked.
+* `pygimp/run.py` no longer matches crash markers in the echoed test script (06's report).
+* P1 0.50–0.53 s, P2 CMYK 0.13 s vs RGB 0.155 s = 0.82–0.86× (2 threads). STATUS.md has the
+  test matrix, the REVIEW-02 disposition table and the upstream estimate.
