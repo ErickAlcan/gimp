@@ -1502,43 +1502,14 @@ cmyk_round_trip (gconstpointer data)
   cmyk_round_trip_full (GIMP (data), FALSE);
 }
 
-/* X1 with a group layer (non-Normal mode, two children).  CMYK group
- * projections are WS02's (gimpgrouplayer.c); until they exist the
- * group layer criticals, so the test runs in a subprocess and skips on
- * that specific failure.
+/* X1 with a group layer (non-Normal mode, two children): CMYK group
+ * projections (gimpgrouplayer.c, WS02)
  */
-static void
-cmyk_group_probe (gconstpointer data)
-{
-  Gimp      *gimp = GIMP (data);
-  GimpImage *image;
-  GFile     *file;
-
-  image = cmyk_create_image (gimp, GIMP_PRECISION_U8_NON_LINEAR, NULL, TRUE);
-  file  = cmyk_tmp_file ();
-  cmyk_save (gimp, image, file);
-  g_file_delete (file, NULL, NULL);
-  g_object_unref (file);
-  g_object_unref (image);
-}
-
 static void
 cmyk_round_trip_group (gconstpointer data)
 {
   if (cmyk_skip_without_support ())
     return;
-
-  g_test_trap_subprocess ("/gimp-xcf/subprocess/cmyk_group_probe",
-                          300 * G_USEC_PER_SEC,
-                          G_TEST_SUBPROCESS_DEFAULT);
-
-  if (! g_test_trap_has_passed ())
-    {
-      g_test_skip ("pending integration (WS02): CMYK group layers "
-                   "(gimpgrouplayer.c get_projection_format) are not "
-                   "implemented yet");
-      return;
-    }
 
   cmyk_round_trip_full (GIMP (data), TRUE);
 }
@@ -1790,8 +1761,6 @@ main (int    argc,
   ADD_TEST (write_and_read_gimp_2_8_format);
   ADD_TEST (cmyk_round_trip);
   ADD_TEST (cmyk_round_trip_group);
-  g_test_add_data_func ("/gimp-xcf/subprocess/cmyk_group_probe", gimp,
-                        cmyk_group_probe);
   ADD_TEST (cmyk_rgb_version_unchanged);
   ADD_TEST (cmyk_header_variant);
   ADD_TEST (cmyk_bad_profile_and_legacy_mode);

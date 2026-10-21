@@ -7,13 +7,8 @@
 # with babl format *names* only ("CMYKA u16", no space): INTERFACES I5
 # makes space-less CMYK <-> image-space CMYK an identity.
 #
-# Sub-tests whose prerequisite belongs to another, not yet merged,
-# workstream print "PENDING INTEGRATION (<ws>): ..." and do not fail;
-# they become strict as soon as the prerequisite is detected:
-#   * WS05 (PDB/libgimp): detected by Gimp.Image.convert_cmyk().  Needed
-#     for E6 (export options "convert to RGB" for RGB-only exporters).
-#     Until then gimp-layer-new ignores the alpha of GIMP_CMYKA_IMAGE, so
-#     the test adds the alpha channel itself.
+# Every sub-test is strict (WS09 removed the pending-integration gates
+# once all workstreams were merged).
 
 import ctypes
 import ctypes.util
@@ -21,14 +16,8 @@ import struct
 
 from gi.repository import Gegl
 
-HAVE_WS05 = hasattr(Gimp.Image, 'convert_cmyk')
-
 tmpdir = Gimp.temp_directory()
 pdb    = Gimp.get_pdb()
-
-
-def pending(ws, what):
-  print(f"PENDING INTEGRATION ({ws}): {what}")
 
 
 ################################################################################
@@ -89,17 +78,14 @@ def precision_for(bpc):
 def new_cmyk_image(w, h, bpc, alpha, with_mask=False):
   image = Gimp.Image.new_with_precision(w, h, Gimp.ImageBaseType.CMYK,
                                         precision_for(bpc))
-  if image is None:
-    return None, None
+  gimp_assert("new CMYK image", image is not None)
 
   layer = Gimp.Layer.new(image, "CMYK layer", w, h,
                          Gimp.ImageType.CMYKA_IMAGE if alpha else
                          Gimp.ImageType.CMYK_IMAGE,
                          100.0, Gimp.LayerMode.NORMAL)
-  if alpha and not layer.has_alpha():
-    if HAVE_WS05:
-      gimp_assert("gimp-layer-new honours GIMP_CMYKA_IMAGE (WS05)", False)
-    layer.add_alpha()
+  gimp_assert("gimp-layer-new honours GIMP_CMYK(A)_IMAGE alpha",
+              layer.has_alpha() == alpha)
   image.insert_layer(layer, None, 0)
 
   buf = layer.get_buffer()
@@ -305,10 +291,8 @@ def check_roundtrip(label, proc, ext, bpc, alpha, with_mask=False, **props):
 def run_tests():
   probe = Gimp.Image.new_with_precision(4, 4, Gimp.ImageBaseType.CMYK,
                                         Gimp.Precision.U16_NON_LINEAR)
-  if probe is None:
-    pending("WS05", "gimp-image-new-with-precision refuses GIMP_CMYK; "
-            "all E tests skipped")
-    return
+  gimp_assert("gimp-image-new-with-precision accepts GIMP_CMYK",
+              probe is not None)
   probe.delete()
 
   builtin = Gimp.ColorProfile.new_cmyk_builtin()
@@ -418,35 +402,29 @@ def run_tests():
   path = os.path.join(tmpdir, 'cmyk-E6.png')
   ok = export('file-png-export', image, path)
   image.delete()
-  if not HAVE_WS05:
-    pending("WS05", f"E6 (PNG export of a CMYK image through the export "
-            f"options' convert-to-RGB step): export returned {ok}, not checked")
-  else:
-    gimp_assert("E6: PNG export of a CMYK image", ok)
-    loaded = load(path)
-    gimp_assert("E6: PNG loads as RGB",
-                loaded.get_base_type() == Gimp.ImageBaseType.RGB)
-    loaded.delete()
+  gimp_assert("E6: PNG export of a CMYK image", ok)
+  loaded = load(path)
+  gimp_assert("E6: PNG loads as RGB",
+              loaded.get_base_type() == Gimp.ImageBaseType.RGB)
+  loaded.delete()
 
   # E7: input-only CMYK profile -> RGB import, warning, no crash
   icc = input_only_profile(profile_bytes(builtin))
-  if icc is None:
-    print("SKIP: E7 needs liblcms2 through ctypes")
-  else:
-    w, h   = 4, 4
-    pixels = make_pixels(w, h, False, 1)
-    path   = os.path.join(tmpdir, 'cmyk-E7-input-only.tif')
-    write_cmyk_tiff(path, w, h, pixels, icc)
-    loaded = load(path)
-    gimp_assert("E7: load", loaded is not None)
-    gimp_assert("E7: loads as RGB",
-                loaded.get_base_type() == Gimp.ImageBaseType.RGB)
-    sim = loaded.get_simulation_profile()
-    gimp_assert("E7: input-only profile not used as soft-proofing profile",
-                sim is None or sim.is_cmyk_bidirectional())
-    rgb = read_pixels(loaded.get_layers()[0], "R'G'B' u8")
-    gimp_assert("E7: K-only pixel is dark", max(rgb[0:3]) < 100)
-    loaded.delete()
+  gimp_assert("E7: liblcms2 available through ctypes", icc is not None)
+  w, h   = 4, 4
+  pixels = make_pixels(w, h, False, 1)
+  path   = os.path.join(tmpdir, 'cmyk-E7-input-only.tif')
+  write_cmyk_tiff(path, w, h, pixels, icc)
+  loaded = load(path)
+  gimp_assert("E7: load", loaded is not None)
+  gimp_assert("E7: loads as RGB",
+              loaded.get_base_type() == Gimp.ImageBaseType.RGB)
+  sim = loaded.get_simulation_profile()
+  gimp_assert("E7: input-only profile not used as soft-proofing profile",
+              sim is None or sim.is_cmyk_bidirectional())
+  rgb = read_pixels(loaded.get_layers()[0], "R'G'B' u8")
+  gimp_assert("E7: K-only pixel is dark", max(rgb[0:3]) < 100)
+  loaded.delete()
 
 
 run_tests()

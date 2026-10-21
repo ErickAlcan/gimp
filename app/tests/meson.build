@@ -44,6 +44,7 @@ app_tests = [
   'cmyk-histogram',
   # separate executable: sets GIMP_TESTING_NO_CMYK before initializing
   'cmyk-nosupport',
+  'cmyk-ui',
 #'session-2-8-compatibility-multi-window',
 #'session-2-8-compatibility-single-window',
 #'single-window-mode',
@@ -71,6 +72,9 @@ foreach test_name : app_tests
       'GIMP_TESTING_ABS_TOP_BUILDDIR='+ meson.project_build_root(),
       'GIMP_TESTING_PLUGINDIRS='      + meson.project_build_root()/'plug-ins'/'common',
       'UI_TEST=yes',
+      # no accessibility bus under dbus-run-session: the AT-SPI bridge
+      # would otherwise warn (fatal in GTK tests)
+      'NO_AT_BRIDGE=1',
     ],
     suite: 'app',
     timeout: 60,

@@ -128,16 +128,8 @@ gimp_c_test_run (GimpProcedure        *procedure,
   GIMP_TEST_END(delete == GIMP_EXPORT_EXPORT && export_image != cmyk_image &&
                 gimp_image_get_base_type (cmyk_image) == GIMP_CMYK);
 
-  if (! error && gimp_image_get_base_type (export_image) == GIMP_CMYK)
-    {
-      /* gimp_image_convert_type_full() is a stub until WS03 merges */
-      printf ("SKIP (pending integration): the exported copy is RGB\n");
-    }
-  else
-    {
-      GIMP_TEST_START("The exported copy of a CMYK image is RGB");
-      GIMP_TEST_END(gimp_image_get_base_type (export_image) == GIMP_RGB);
-    }
+  GIMP_TEST_START("The exported copy of a CMYK image is RGB");
+  GIMP_TEST_END(gimp_image_get_base_type (export_image) == GIMP_RGB);
 
   if (export_image != cmyk_image)
     gimp_image_delete (export_image);

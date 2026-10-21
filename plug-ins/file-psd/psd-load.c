@@ -3294,6 +3294,18 @@ add_layers (GimpImage     *image,
             {
               /* Mode */
               psd_to_gimp_blend_mode (lyr_a[lidx], &mode_info);
+
+              /* An explicit RGB blend/composite space makes a layer of a
+               * CMYK image composite through RGB, which re-separates
+               * every ink (K100 becomes rich black in the projection).
+               * Leave CMYK layers on AUTO, i.e. CMYK-native compositing.
+               */
+              if (gimp_image_get_base_type (image) == GIMP_CMYK)
+                {
+                  mode_info.blend_space     = GIMP_LAYER_COLOR_SPACE_AUTO;
+                  mode_info.composite_space = GIMP_LAYER_COLOR_SPACE_AUTO;
+                }
+
               if (! strlen (lyr_a[lidx]->adjustment_layer->type))
                 gimp_layer_set_mode (layer, mode_info.mode);
               gimp_layer_set_blend_space (layer, mode_info.blend_space);
@@ -5916,8 +5928,12 @@ add_clipping_group (GimpImage  *image,
 
   clipping_group = GIMP_LAYER (gimp_group_layer_new (image, "Group added by GIMP"));
 
-  gimp_layer_set_blend_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
-  gimp_layer_set_composite_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+  /* CMYK images composite natively (AUTO), see add_layers()  */
+  if (gimp_image_get_base_type (image) != GIMP_CMYK)
+    {
+      gimp_layer_set_blend_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+      gimp_layer_set_composite_space (clipping_group, GIMP_LAYER_COLOR_SPACE_RGB_PERCEPTUAL);
+    }
   gimp_layer_set_composite_mode (clipping_group, GIMP_LAYER_COMPOSITE_UNION);
 
   gimp_image_insert_layer (image, clipping_group, parent, 0);
