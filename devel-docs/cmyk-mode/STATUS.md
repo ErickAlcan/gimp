@@ -82,8 +82,13 @@ No test is skipped at suite level; inside suites the only remaining skips are th
 
 ¹ after WS09's fix: copy-of-selection and anchor paths compare at float for DOUBLE/U32 (layer
 modes process at float for every precision, as for RGB).
-`GIMP_TESTING_NO_CMYK=1` on `cmyk-nosupport`: OK (N1–N4). The ASan results are in WS09's
-Status section.
+`GIMP_TESTING_NO_CMYK=1` on `cmyk-nosupport`: OK (N1–N4).
+**ASan** (`_build-asan`, `-Db_sanitize=address`, `detect_leaks=0`): core, layer-modes-golden,
+cmyk-foundation, cmyk-compositing, cmyk-image, cmyk-histogram (incl. H2 pickers on CMYKA double),
+cmyk-nosupport, cmyk-ui and xcf all OK at the default precision, with
+`GIMP_TESTING_CMYK_PRECISION=double`, and with both real ICC profiles; no AddressSanitizer
+report. The Python suites cannot run against an ASan build (GObject introspection is disabled
+with sanitizers; the configure needs a native `gimp-console-3.3` in `PATH`).
 
 **Performance** (`GIMP_TESTING_PERF=report`, 2048² u16, GEGL threads = 2, this box):
 * P1 (CMYK Multiply projection): **1.04–1.31 s** (target ≤ 1.5 s): **met**.
