@@ -301,9 +301,10 @@ aux_native_supported (const Babl *aux_format,
   bpp = babl_format_get_bytes_per_pixel (aux_format) /
         babl_format_get_n_components (aux_format);
 
-  if (bpp == 1)
+  /*  the component type, not only its size: "half" is 2 bytes too  */
+  if (bpp == 1 && babl_format_get_type (aux_format, 0) == babl_type ("u8"))
     index = 0;
-  else if (bpp == 2)
+  else if (bpp == 2 && babl_format_get_type (aux_format, 0) == babl_type ("u16"))
     index = 1;
   else
     return FALSE;
