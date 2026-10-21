@@ -1123,7 +1123,15 @@ save_resources (GOutputStream       *output,
   {
     GimpColorProfile *profile = NULL;
 
-    if (options->cmyk)
+    if (options->tif && gimp_image_get_base_type (image) == GIMP_CMYK)
+      {
+        /* Metadata for TIFF/JPEG: the host format embeds the profile
+         * of a CMYK image itself; a copy here only bloats the resource
+         * block (the builtin CMYK profile is ~80 KB).
+         */
+        profile = NULL;
+      }
+    else if (options->cmyk)
       {
         profile = get_cmyk_export_profile (image);
       }
